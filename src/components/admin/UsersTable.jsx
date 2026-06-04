@@ -181,7 +181,7 @@ export default function UsersTable({ users, currentUserId }) {
             {filtered.length === 0 && (
               <tr>
                 <td colSpan={6} className="px-4 py-10 text-center text-neutral-500 text-[13px]">
-                  <div className="font-semibold">Sin coincidencias para "{query}"</div>
+                  <div className="font-semibold">Sin coincidencias para &quot;{query}&quot;</div>
                   <div className="text-[11.5px] text-neutral-400 mt-1">
                     Prueba con otra palabra o limpia el buscador.
                   </div>
