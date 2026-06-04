@@ -1,27 +1,26 @@
+/* app/globals.css
+ * Estilos globales: Tailwind base + tipografía + utilidades específicas
+ * que no se expresan bien sólo con clases (línea de acento del nav activo).
+ */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html, body {
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
 
 body {
-  color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  @apply bg-neutral-100 text-neutral-900 antialiased;
 }
 
-@layer utilities {
-  .text-balance {
-    text-wrap: balance;
-  }
+/* Marcador izquierdo ámbar para el item de navegación activo */
+.nav-active {
+  box-shadow: inset 3px 0 0 0 #F2A900;
 }
+
+/* Scrollbar oculta en el sidebar */
+.hide-scrollbar::-webkit-scrollbar { display: none; }
+.hide-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
