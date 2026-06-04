@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 'use client';
 // components/modals/CalibrationModal.jsx
 // =========================================================================
@@ -223,7 +224,7 @@ export default function CalibrationModal() {
               </svg>
               <div className="text-[12.5px] text-amber-900 leading-snug">
                 <strong>Modo lectura:</strong> tu rol ({profile?.role}) no permite firmar
-                calibraciones. Solicita a Automatización el permiso &quot;{Técnico}&quot; o &quot;{Admin}&quot;
+                calibraciones. Solicita a Automatización el permiso &quot;Técnico&quot; o &quot;Admin&quot;
                 para guardar registros.
               </div>
             </div>
