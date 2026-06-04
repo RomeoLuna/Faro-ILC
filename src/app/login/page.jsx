@@ -1,9 +1,9 @@
 'use client';
-import { useState, useTransition } from 'react';
+import { useState, useTransition, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { signInWithPassword } from './actions';
 
-export default function LoginPage() {
+function LoginForm() {
   const next = useSearchParams().get('next') || '/envasado';
   const [error, setError] = useState(null);
   const [pending, startTransition] = useTransition();
@@ -48,5 +48,18 @@ export default function LoginPage() {
         <p className="text-center text-[11.5px] text-neutral-400 mt-6">¿Olvidaste tu contraseña? Contacta a Automatización.</p>
       </div>
     </div>
+  );
+}
+
+// ─── Envoltorio necesario para Next.js en producción ─────────────────────
+export default function LoginPage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-brand-ink text-brand-amber font-bold text-sm tracking-widest uppercase">
+        Cargando sistema...
+      </div>
+    }>
+      <LoginForm />
+    </Suspense>
   );
 }
