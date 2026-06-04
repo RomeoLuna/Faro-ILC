@@ -1,8 +1,9 @@
+/* eslint-disable react/no-unescaped-entities, jsx-a11y/alt-text */
 // components/pdf/CertificatePDF.jsx
 // =========================================================================
 // CERTIFICATE PDF — Documento vectorial con @react-pdf/renderer
 // Layout A4 (595 × 842 pt) con 5 bloques:
-//   1. Header   — Marca + título + fecha + OT SAP
+//   1. Header  — Marca + título + fecha + OT SAP
 //   2. Bloque 1 — Datos del instrumento
 //   3. Bloque 2 — Patrón usado + tolerancia
 //   4. Bloque 3 — Tabla con los 9 puntos de calibración
@@ -329,7 +330,7 @@ export default function CertificatePDF({
           <View style={styles.signatureBox}>
             <View style={styles.signatureSlot}>
               {supervisor?.signature ? (
-                <Image src={supervisor.signature} style={styles.signatureImg} />
+                <Image src={supervisor.signature} alt="Firma del supervisor" style={styles.signatureImg} />
               ) : (
                 <Text style={styles.signaturePlaceholder}>Sin firma de supervisor</Text>
               )}
