@@ -40,7 +40,7 @@ function formatAlta(iso) {
 // ─── Badge del rol actual (read-only) ────────────────────────────────────
 function RoleBadge({ role }) {
   const map = {
-    admin:   { cls: 'bg-brand-amberSoft text-amber-700 border-amber-300',         label: 'Admin' },
+    admin:   { cls: 'bg-brand-amberSoft text-amber-700 border-amber-300',        label: 'Admin' },
     tecnico: { cls: 'bg-brand-passSoft text-brand-pass border-brand-pass/30',     label: 'Técnico' },
     viewer:  { cls: 'bg-brand-envSoft text-brand-env border-brand-env/30',        label: 'Viewer' },
   };
@@ -195,7 +195,7 @@ export default function UsersTable({ users, currentUserId }) {
       {/* Footer informativo */}
       <div className="px-5 py-3 border-t border-neutral-200 bg-neutral-50 text-[11.5px] text-neutral-500 flex justify-between items-center flex-wrap gap-2">
         <span>
-          La acción se guarda al instante; el badge "Rol actual" se actualiza tras refrescar.
+          La acción se guarda al instante; el badge &quot;Rol actual&quot; se actualiza tras refrescar.
         </span>
         <span>
           Cambios protegidos por RLS de Postgres + chequeo server-side.
