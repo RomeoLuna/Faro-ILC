@@ -1,11 +1,21 @@
 'use client';
 // components/faro/PositionsTableClient.jsx
 // =========================================================================
-// POSITIONS TABLE CLIENT — Sprint 16 (Trazabilidad Total SAP)
+// POSITIONS TABLE CLIENT — Sprint 18 (override de frecuencia técnica NOTI)
 // -------------------------------------------------------------------------
-// Combina los filtros y reactividad del Sprint 15 con la nueva estructura
-// de 10 columnas de SAP. Divide el historial en Extrema, Cierre y Notificación,
-// e incluye los tokens reales de SAP [CTEC], [NOTI], [LIB] en cada fecha.
+// Mantiene la estructura Sprint 17 intacta:
+//   • 10 columnas (POS, Equipo, Área/Sub-área, Frec, Inicio Ext., Cierre,
+//     NOTI, Próxima SAP, Estado, Acciones).
+//   • Filtros en cascada Área → Sub-área.
+//   • SapDateCell genérico para las 4 columnas de fechas SAP.
+//
+// CAMBIO Sprint 18 — única regla de negocio añadida:
+//   Si han pasado más meses desde `last_noti_date` que los permitidos por
+//   `frequency_months`, la POS se considera VENCIDA por antigüedad técnica,
+//   independientemente del status SAP. Se aplica ANTES de:
+//     • renderizar el StatusBadge (cambia label a "Vencido (frecuencia)")
+//     • renderizar el icono ⚠️ en la celda Última (Inicio Ext.)
+//     • emitir `filtered` al padre (KPIs, Donut, Trend, Compliance)
 // =========================================================================
 
 import { useEffect, useMemo, useState } from 'react';
@@ -55,17 +65,44 @@ function primaryStatusToken(status) {
   return status.split(/\s+/)[0].replace(/\.$/, '');
 }
 
-// Verifica si la fecha extrema + frecuencia ya superó el día de hoy
-function isFreqOverdue(lastSapDateExtrema, frequencyMonths) {
-  if (!lastSapDateExtrema || !frequencyMonths) return false;
-  const last = parseLocalDate(lastSapDateExtrema);
+// ─── Validación de frecuencia técnica (Sprint 18) ───────────────────────
+// Compara la ÚLTIMA NOTIFICACIÓN EFECTIVA (last_noti_date, status %NOTI%)
+// contra la frecuencia permitida (frequency_months).
+//
+// Regla: si hoy > last_noti_date + frequency_months, la POS está VENCIDA
+// por antigüedad técnica, aunque SAP muestre la OT como CTEC.
+function isFreqOverdue(lastNotiDate, frequencyMonths) {
+  if (!lastNotiDate || !frequencyMonths) return false;
+  const last = parseLocalDate(lastNotiDate);
   if (!last) return false;
   const due = new Date(last);
   due.setMonth(due.getMonth() + Number(frequencyMonths));
   return Date.now() > due.getTime();
 }
 
-function statusBadgeProps(status, daysRemaining, lastSapDateExtrema) {
+// Status efectivo del faro:
+//   - Si isFreqOverdue(last_noti_date, frequency_months) → 'VENCIDO' (override
+//     duro sobre el status SAP-driven, aunque la OT esté en CTEC).
+//   - En cualquier otro caso respetamos el status SAP-driven que viene
+//     de la vista maintenance_positions_view.
+function effectiveStatus(p) {
+  if (isFreqOverdue(p.last_noti_date, p.frequency_months)) return 'VENCIDO';
+  return p.status;
+}
+
+function statusBadgeProps(status, daysRemaining, lastSapDateExtrema, freqOverdue) {
+  // Sprint 18: cuando el VENCIDO viene del override por frecuencia técnica
+  // (no del backlog SAP), distinguimos el label para que el usuario sepa
+  // que la causa es la antigüedad de la última NOTI, no una OT abierta atrasada.
+  if (status === 'VENCIDO' && freqOverdue) {
+    return {
+      cls:   'bg-brand-failSoft text-brand-fail',
+      dot:   'bg-brand-fail',
+      label: 'Vencido (frecuencia)',
+      hint:  'Última NOTI supera la frecuencia técnica',
+    };
+  }
+
   switch (status) {
     case 'VIGENTE':
       return {
@@ -113,7 +150,9 @@ function matchesQuery(position, q) {
     position.description,
     position.sap_open_wo,
     position.last_closed_wo,
-    position.last_noti_wo
+    position.last_noti_wo,
+    position.area,
+    position.sub_area,
   ]
     .filter(Boolean)
     .map((s) => s.toString().toLowerCase())
@@ -122,7 +161,7 @@ function matchesQuery(position, q) {
 }
 
 function sortValue(position, key) {
-  if (key === 'area')          return (position.area_name || '').toLowerCase();
+  if (key === 'area')          return ((position.area || '') + (position.sub_area || '')).toLowerCase();
   if (key === 'status')        return STATUS_RANK[position.status] ?? 99;
   if (key === 'next_sap_date') return position.next_sap_date || null;
   return null;
@@ -159,8 +198,8 @@ function SortHeader({ label, sortKey, current, onClick, align = 'left' }) {
   );
 }
 
-function StatusBadge({ status, daysRemaining, lastSapDateExtrema }) {
-  const badge = statusBadgeProps(status, daysRemaining, lastSapDateExtrema);
+function StatusBadge({ status, daysRemaining, lastSapDateExtrema, freqOverdue }) {
+  const badge = statusBadgeProps(status, daysRemaining, lastSapDateExtrema, freqOverdue);
 
   return (
     <div className="flex flex-col gap-1 w-fit">
@@ -175,7 +214,6 @@ function StatusBadge({ status, daysRemaining, lastSapDateExtrema }) {
   );
 }
 
-// Celda unificada para renderizar Fechas con su respectiva OT, Status y Alertas
 function SapDateCell({ dateIso, woNumber, sapStatus, isFutureAlert = false, freqOverdue = false }) {
   if (!dateIso && !woNumber) return <span className="text-neutral-400">—</span>;
 
@@ -189,7 +227,10 @@ function SapDateCell({ dateIso, woNumber, sapStatus, isFutureAlert = false, freq
           {dateStr || <span className="text-neutral-400 font-normal">—</span>}
         </span>
         {freqOverdue && (
-          <span title="Vencido por frecuencia técnica: ya pasó la fecha planificada límite" className="text-brand-fail inline-flex">
+          <span
+            title="Vencido por frecuencia técnica: hoy > (last_noti_date + frequency_months)"
+            className="text-brand-fail inline-flex"
+          >
             <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
               <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
               <line x1="12" y1="9"  x2="12"    y2="13" />
@@ -216,29 +257,57 @@ function SapDateCell({ dateIso, woNumber, sapStatus, isFutureAlert = false, freq
 // COMPONENTE PRINCIPAL
 // =========================================================================
 export default function PositionsTableClient({ positions, section, onFilteredChange }) {
-  const [query, setQuery]               = useState('');
-  const [areaFilter, setAreaFilter]     = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
-  const [sort, setSort]                 = useState({ key: null, dir: 'asc' });
+  const [query, setQuery]                 = useState('');
+  const [areaFilter, setAreaFilter]       = useState('');
+  const [subAreaFilter, setSubAreaFilter] = useState('');
+  const [statusFilter, setStatusFilter]   = useState('');
+  const [sort, setSort]                   = useState({ key: null, dir: 'asc' });
 
-  // ── Áreas únicas para el dropdown ────────────────────────────────────
+  // ── Enriched: aplica el override de frecuencia técnica antes que nada ──
+  // Cada fila gana:
+  //   _freqOverdue : boolean   ¿se disparó la regla last_noti_date + freq?
+  //   status       : reemplazado por effectiveStatus(p) para que todos los
+  //                  consumidores aguas abajo (filtros, sort, KPIs,
+  //                  ComplianceChart, StatusDonutChart, TrendLineChart)
+  //                  vean exactamente el mismo veredicto.
+  const enriched = useMemo(
+    () => positions.map((p) => ({
+      ...p,
+      _freqOverdue: isFreqOverdue(p.last_noti_date, p.frequency_months),
+      status:       effectiveStatus(p),
+    })),
+    [positions]
+  );
+
+  // ── Áreas únicas (CENSO v3) para el dropdown ─────────────────────────
   const areas = useMemo(() => {
     const set = new Set();
-    for (const p of positions) {
-      if (p.area_name) set.add(p.area_name);
+    for (const p of enriched) {
+      if (p.area) set.add(p.area);
     }
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'es'));
-  }, [positions]);
+  }, [enriched]);
 
-  // ── Subset filtrado (search + área + estado) — sin sort ──────────────
+  // ── Sub-áreas únicas (depende del Área seleccionada) ─────────────────
+  const subAreas = useMemo(() => {
+    const set = new Set();
+    for (const p of enriched) {
+      if (areaFilter && p.area !== areaFilter) continue;
+      if (p.sub_area) set.add(p.sub_area);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'es'));
+  }, [enriched, areaFilter]);
+
+  // ── Subset filtrado (search + área + sub-área + estado) ──────────────
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    let rows = positions;
-    if (q)            rows = rows.filter((p) => matchesQuery(p, q));
-    if (areaFilter)   rows = rows.filter((p) => p.area_name === areaFilter);
-    if (statusFilter) rows = rows.filter((p) => p.status === statusFilter);
+    let rows = enriched;
+    if (q)             rows = rows.filter((p) => matchesQuery(p, q));
+    if (areaFilter)    rows = rows.filter((p) => p.area === areaFilter);
+    if (subAreaFilter) rows = rows.filter((p) => p.sub_area === subAreaFilter);
+    if (statusFilter)  rows = rows.filter((p) => p.status === statusFilter);
     return rows;
-  }, [positions, query, areaFilter, statusFilter]);
+  }, [enriched, query, areaFilter, subAreaFilter, statusFilter]);
 
   // ── Notificar al padre cuando cambia el subset filtrado ──────────────
   useEffect(() => {
@@ -269,12 +338,19 @@ export default function PositionsTableClient({ positions, section, onFilteredCha
   }
 
   // ── Limpieza global de filtros ───────────────────────────────────────
-  const hasFilters = !!(query || areaFilter || statusFilter || sort.key);
+  const hasFilters = !!(query || areaFilter || subAreaFilter || statusFilter || sort.key);
   function clearAll() {
     setQuery('');
     setAreaFilter('');
+    setSubAreaFilter('');
     setStatusFilter('');
     setSort({ key: null, dir: 'asc' });
+  }
+
+  // Cambio de Área → resetea la sub-área (cascada)
+  function handleAreaChange(e) {
+    setAreaFilter(e.target.value);
+    setSubAreaFilter('');
   }
 
   const posClass = section === 'envasado' ? 'text-brand-env' : 'text-brand-eng';
@@ -329,12 +405,24 @@ export default function PositionsTableClient({ positions, section, onFilteredCha
 
           <select
             value={areaFilter}
-            onChange={(e) => setAreaFilter(e.target.value)}
+            onChange={handleAreaChange}
             className="bg-white border border-neutral-300 rounded-lg px-2.5 py-1.5 text-[12.5px] font-semibold focus:outline-none focus:ring-2 focus:ring-brand-amber/40 focus:border-brand-amber"
           >
             <option value="">Todas las áreas</option>
             {areas.map((a) => (
               <option key={a} value={a}>{a}</option>
+            ))}
+          </select>
+
+          <select
+            value={subAreaFilter}
+            onChange={(e) => setSubAreaFilter(e.target.value)}
+            className="bg-white border border-neutral-300 rounded-lg px-2.5 py-1.5 text-[12.5px] font-semibold focus:outline-none focus:ring-2 focus:ring-brand-amber/40 focus:border-brand-amber disabled:bg-neutral-100 disabled:text-neutral-400"
+            disabled={subAreas.length === 0}
+          >
+            <option value="">Todas las sub-áreas</option>
+            {subAreas.map((sa) => (
+              <option key={sa} value={sa}>{sa}</option>
             ))}
           </select>
 
@@ -369,7 +457,7 @@ export default function PositionsTableClient({ positions, section, onFilteredCha
               <th className="px-3 py-3 font-bold text-[10.5px] uppercase tracking-wider text-neutral-700">POS MTTO</th>
               <th className="px-3 py-3 font-bold text-[10.5px] uppercase tracking-wider text-neutral-700">Equipo / Descripción</th>
               <th className="px-3 py-3">
-                <SortHeader label="Área" sortKey="area" current={sort} onClick={toggleSort} />
+                <SortHeader label="Área / Sub-área" sortKey="area" current={sort} onClick={toggleSort} />
               </th>
               <th className="px-3 py-3 font-bold text-[10.5px] uppercase tracking-wider text-neutral-700">Frec.</th>
               <th className="px-3 py-3 font-bold text-[10.5px] uppercase tracking-wider text-neutral-700 bg-neutral-100/50">Última (Inicio Ext.)</th>
@@ -386,7 +474,9 @@ export default function PositionsTableClient({ positions, section, onFilteredCha
           </thead>
           <tbody className="divide-y divide-neutral-100">
             {processed.map((p) => {
-              const freqOverdue = isFreqOverdue(p.last_sap_date_extrema, p.frequency_months);
+              // freqOverdue ya viene pre-calculado en `enriched`. Lo leemos
+              // desde el flag inyectado para no recalcular en cada render.
+              const freqOverdue = p._freqOverdue;
 
               return (
                 <tr key={p.id} className="hover:bg-amber-50/40">
@@ -395,17 +485,26 @@ export default function PositionsTableClient({ positions, section, onFilteredCha
                   </td>
 
                   <td className="px-3 py-3">
-                    <div className="font-semibold line-clamp-1" title={p.description}>{p.description}</div>
+                    <div className="font-semibold line-clamp-1" title={p.equipment_name}>
+                      {p.equipment_name || '—'}
+                    </div>
                     {p.description && (
-                      <div className="text-[11px] text-neutral-500 line-clamp-1" title={p.equipment_name}>{p.equipment_name}</div>
+                      <div className="text-[11px] text-neutral-500 line-clamp-1" title={p.description}>
+                        {p.description}
+                      </div>
                     )}
                   </td>
 
-                  <td className="px-3 py-3 text-neutral-700">{p.area_name || '—'}</td>
+                  <td className="px-3 py-3">
+                    <div className="font-bold text-neutral-700">{p.area || '—'}</div>
+                    {p.sub_area && (
+                      <div className="text-[11px] text-neutral-500">{p.sub_area}</div>
+                    )}
+                  </td>
 
                   <td className="px-3 py-3">{p.frequency_label || '—'}</td>
 
-                  {/* ÚLTIMA (Inicio Extremo) - Lleva la alerta de frecuencia */}
+                  {/* ÚLTIMA (Inicio Extremo) — icono ⚠️ si freq NOTI vencida */}
                   <td className="px-3 py-3 bg-neutral-50/30">
                     <SapDateCell
                       dateIso={p.last_sap_date_extrema}
@@ -433,7 +532,7 @@ export default function PositionsTableClient({ positions, section, onFilteredCha
                     />
                   </td>
 
-                  {/* PRÓXIMA (SAP) - Pinta rojo si la OT está vencida */}
+                  {/* PRÓXIMA (SAP) */}
                   <td className="px-3 py-3 bg-amber-50/10">
                     <SapDateCell
                       dateIso={p.next_sap_date}
@@ -443,12 +542,13 @@ export default function PositionsTableClient({ positions, section, onFilteredCha
                     />
                   </td>
 
-                  {/* Estado (Solo Semáforo) */}
+                  {/* Estado — Badge con override por frecuencia */}
                   <td className="px-3 py-3">
                     <StatusBadge
                       status={p.status}
                       daysRemaining={p.days_remaining}
                       lastSapDateExtrema={p.last_sap_date_extrema}
+                      freqOverdue={freqOverdue}
                     />
                   </td>
 
