@@ -1,14 +1,15 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Otras configuraciones que ya tengas...
-
+  // Para Next.js 14.1+
   serverActions: {
-    allowedOrigins: [
-      'faro-ilcbeer.netlify.app', 
-      '*.netlify.app', 
-      'localhost:3000'
-    ]
+    allowedOrigins: ['faro-ilcbeer.netlify.app', '*.netlify.app']
+  },
+  // Para Next.js 13.4 hasta 14.0
+  experimental: {
+    serverActions: {
+      allowedOrigins: ['faro-ilcbeer.netlify.app', '*.netlify.app']
+    }
   }
 };
 
-export default nextConfig; // o module.exports = nextConfig; dependiendo de tu archivo
+module.exports = nextConfig; // Usa 'export default nextConfig;' si tu archivo termina en .mjs
