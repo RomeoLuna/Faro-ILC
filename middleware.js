@@ -95,12 +95,7 @@ export async function middleware(request) {
 
 export const config = {
   matcher: [
-    /*
-     * Aplica el middleware a todas las rutas EXCEPTO:
-     *   - _next/static (archivos estáticos)
-     *   - _next/image  (optimización de imágenes)
-     *   - favicon.ico / imágenes públicas
-     */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js)$).*)',
   ],
 };
+
