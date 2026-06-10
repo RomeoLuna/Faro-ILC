@@ -484,12 +484,19 @@ export default function PositionsTableClient({ positions, section, onFilteredCha
                     {p.pos_mtto}
                   </td>
 
-                  <td className="px-3 py-3">
-                    <div className="font-semibold line-clamp-1" title={p.equipment_name}>
+                  {/* COLUMNA EQUIPO ACTUALIZADA CON HOVER EXTENDIDO Y TAMAÑO MEJORADO */}
+                  <td className="px-3 py-3 max-w-[280px] min-w-[200px]">
+                    <div 
+                      className="font-semibold text-wrap break-words leading-tight hover:text-brand-amber transition-colors" 
+                      title={p.equipment_name}
+                    >
                       {p.equipment_name || '—'}
                     </div>
                     {p.description && (
-                      <div className="text-[11px] text-neutral-500 line-clamp-1" title={p.description}>
+                      <div 
+                        className="text-[11px] text-neutral-500 mt-1 line-clamp-2 hover:line-clamp-none cursor-help transition-all duration-300" 
+                        title="Haz clic o mantén el mouse para ver descripción completa"
+                      >
                         {p.description}
                       </div>
                     )}
