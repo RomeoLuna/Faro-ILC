@@ -1,34 +1,30 @@
 // app/api/auth/login/route.js
 // =========================================================================
-// LOGIN ROUTE HANDLER — Sprint 20 (bypass CSRF de Server Actions en Netlify)
+// LOGIN ROUTE HANDLER — Sprint 20.1 (fix de cookies en Netlify)
 // -------------------------------------------------------------------------
-// Por qué existe este endpoint:
-//   Los Server Actions de Next.js 14 validan CSRF comparando Origin contra
-//   x-forwarded-host. En Netlify Edge ese header llega vacío o con un
-//   valor interno, así que el check rebota con 403. Un Route Handler POST
-//   convencional NO tiene esta validación — sigue el modelo "API endpoint"
-//   y solo respeta lo que tú implementes.
+// CAMBIO vs. Sprint 20:
+//   • Eliminado `cookies()` de `next/headers`. Esa API tiene un bug
+//     conocido en Route Handlers + Next 14.2: los Set-Cookie set vía
+//     `cookieStore.set()` no se attachean al `NextResponse.json()` que
+//     retornas — quedan en un response stream "mágico" interno que
+//     Netlify Edge no propaga al cliente.
+//   • Ahora leo cookies desde `request.cookies` (NextRequest) y escribo
+//     a `response.cookies` (NextResponse) — la propagación es directa
+//     y determinista, sin magia de Next.
+//   • `setAll` ahora bufferiza en un array y APLICAMOS las cookies al
+//     final, sobre el response que efectivamente devolvemos.
+//   • `export const runtime = 'nodejs'` fija el runtime — Netlify
+//     puede empujar Route Handlers a Edge por default, donde
+//     @supabase/ssr tiene edge-cases con el chunking de cookies.
 //
-// Modelo de cookies:
-//   En un Route Handler PODEMOS escribir cookies via cookies() de
-//   next/headers. La sesión Supabase la fija setAll() inmediatamente
-//   sobre la response — el cliente la guarda y el middleware ya la ve
-//   en el siguiente request.
-//
-// Seguridad mínima:
-//   • Body como JSON (no FormData) → tipos estables.
-//   • next valida que sea path interno (empieza con '/'), no URL absoluta,
-//     para evitar open redirect via `?next=https://malicious.com`.
-//   • Sin rate limiting aquí — confía en el rate limit de Supabase Auth.
+// El frontend NO cambia — sigue mandando JSON al mismo endpoint.
 // =========================================================================
 
 import { NextResponse } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
-import { cookies } from 'next/headers';
 
-// Nunca cachear esta ruta: el cookie del usuario debe escribirse fresh
-// en cada POST. force-dynamic es redundante para POST pero explícito > implícito.
-export const dynamic = 'force-dynamic';
+export const runtime = 'nodejs';        // sin esto Netlify puede usar Edge
+export const dynamic = 'force-dynamic'; // nunca cachear
 
 export async function POST(request) {
   // ── 1) Parsear body ────────────────────────────────────────────────────
@@ -46,7 +42,6 @@ export async function POST(request) {
   const password = (body?.password || '').toString();
   const nextRaw  = (body?.next     || '/envasado').toString();
 
-  // ── 2) Validación básica ──────────────────────────────────────────────
   if (!email || !password) {
     return NextResponse.json(
       { ok: false, error: 'Ingresa correo y contraseña.' },
@@ -59,53 +54,62 @@ export async function POST(request) {
     ? nextRaw
     : '/envasado';
 
-  // ── 3) Cliente Supabase con cookies del request handler ───────────────
-  const cookieStore = cookies();
+  // ── 2) Buffer de cookies que Supabase va a pedir setear ───────────────
+  // No las aplicamos directamente porque el response final aún no existe.
+  // Cuando termine signInWithPassword construiremos el response y le
+  // copiaremos estas cookies. Así garantizamos que el Set-Cookie viaja
+  // en el response que efectivamente devolvemos.
+  const cookiesToApply = [];
 
   const supabase = createServerClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
     {
       cookies: {
+        // Leemos las cookies que el cliente envió (incluye chunks .0/.1/.2
+        // si hubiera una sesión previa). NextRequest.cookies.getAll() es la
+        // fuente directa, sin pasar por next/headers.
         getAll() {
-          return cookieStore.getAll();
+          return request.cookies.getAll();
         },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
-            );
-          } catch {
-            // En un Route Handler POST esto sí funciona — el catch es
-            // defensivo por si Next cambia el contrato a futuro.
-          }
+        // Buffer en vez de set directo. Es CRÍTICO: Supabase puede invocar
+        // setAll varias veces durante un mismo flow (rotación de refresh
+        // token + access token + code verifier en PKCE), así acumulamos
+        // todas las llamadas y las aplicamos juntas al final.
+        setAll(cookiesList) {
+          cookiesToApply.push(...cookiesList);
         },
       },
     }
   );
 
-  // ── 4) Auth call ──────────────────────────────────────────────────────
+  // ── 3) Auth call ──────────────────────────────────────────────────────
   const { data, error } = await supabase.auth.signInWithPassword({
     email,
     password,
   });
 
-  if (error) {
-    // 401 para credenciales inválidas; el cliente sabrá que es esperado.
-    return NextResponse.json(
-      { ok: false, error: error.message || 'No se pudo iniciar sesión.' },
-      { status: 401 }
-    );
+  // ── 4) Construir response (éxito o error) ─────────────────────────────
+  // En ambos casos aplicamos las cookies que Supabase pidió — si hubo
+  // error, el buffer estará vacío (no se planta nada), así que es
+  // seguro hacerlo incondicional.
+  const response = error
+    ? NextResponse.json(
+        { ok: false, error: error.message || 'No se pudo iniciar sesión.' },
+        { status: 401 }
+      )
+    : NextResponse.json({
+        ok: true,
+        redirect: next,
+        user: data.user
+          ? { id: data.user.id, email: data.user.email }
+          : null,
+      });
+
+  // ── 5) Aplicar las cookies sobre el response real ─────────────────────
+  for (const { name, value, options } of cookiesToApply) {
+    response.cookies.set(name, value, options);
   }
 
-  // ── 5) Éxito — devolvemos redirect que el cliente debe seguir ─────────
-  // No redirigimos desde el servidor porque el cliente necesita procesar
-  // las cookies Set-Cookie ANTES de navegar (con fetch normal sería
-  // transparente, pero con window.location.assign el browser asegura
-  // que el cookie jar ya tiene los chunks .0/.1/.2 plantados).
-  return NextResponse.json({
-    ok: true,
-    redirect: next,
-    user: data.user ? { id: data.user.id, email: data.user.email } : null,
-  });
+  return response;
 }
