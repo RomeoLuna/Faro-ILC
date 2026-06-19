@@ -9,19 +9,10 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { SUPERVISORS } from '@/lib/supervisors';
 
 export async function saveCalibrationEvent(payload) {
-  // ── Validación del payload
-  if (!payload?.position_id) {
-    return { ok: false, error: 'Falta position_id.' };
-  }
-  if (!Array.isArray(payload.points) || payload.points.length !== 9) {
-    return { ok: false, error: 'Se esperan exactamente 9 puntos de calibración.' };
-  }
-  if (payload.range_min == null || payload.range_max == null) {
-    return { ok: false, error: 'Faltan rango mín/máx del instrumento.' };
-  }
-  if (!payload.supervisor_name || !payload.supervisor_signature) {
-    return { ok: false, error: 'Selecciona el supervisor que aprueba la calibración.' };
-  }
+  if (!payload?.position_id) return { ok: false, error: 'Falta position_id.' };
+  if (!Array.isArray(payload.points) || payload.points.length !== 9) return { ok: false, error: 'Se esperan exactamente 9 puntos.' };
+  if (payload.range_min == null || payload.range_max == null) return { ok: false, error: 'Faltan rango mín/máx.' };
+  if (!payload.supervisor_name || !payload.supervisor_signature) return { ok: false, error: 'Selecciona supervisor.' };
 
   const normalizedPoints = payload.points.map((p, i) => ({
     point_index:    i,
@@ -76,43 +67,29 @@ export async function saveCalibrationEvent(payload) {
 }
 
 export async function getCalibrationHistory(positionId) {
-  if (!positionId) {
-    return { ok: false, error: 'Falta positionId.' };
-  }
+  if (!positionId) return { ok: false, error: 'Falta positionId.' };
 
   const supabase = createSupabaseServerClient();
 
   const { data: events, error } = await supabase
     .from('calibration_events')
     .select(`
-      id, source,
-      sap_wo, instrument_tag, serial_number,
-      pattern_used,
+      id, source, sap_wo, instrument_tag, serial_number, pattern_used,
       range_min, range_max, unit, tolerance_pct, sensor_type,
-      result, performed_at, performed_by,
-      supervisor_signature,
-      observations,
+      result, performed_at, performed_by, supervisor_signature, observations,
       external_provider, external_cert_number, external_cert_pdf_url,
       points:calibration_points (
-        id, point_index, pct, phase, nominal_ma,
-        expected_value, reading_ma, reading_value, error_pct, result
+        id, point_index, pct, phase, nominal_ma, expected_value, reading_ma, reading_value, error_pct, result
       ),
-      technician:profiles!performed_by (
-        id, full_name, email, role
-      )
+      technician:profiles!performed_by (id, full_name, email, role)
     `)
     .eq('position_id', positionId)
     .order('performed_at', { ascending: false });
 
-  if (error) {
-    console.error('[getCalibrationHistory] query error:', error);
-    return { ok: false, error: error.message };
-  }
+  if (error) return { ok: false, error: error.message };
 
   const processed = (events || []).map((ev) => {
-    const points = [...(ev.points || [])].sort(
-      (a, b) => a.point_index - b.point_index
-    );
+    const points = [...(ev.points || [])].sort((a, b) => a.point_index - b.point_index);
 
     let observations_clean = ev.observations || '';
     let supervisor_name = null;
@@ -123,8 +100,7 @@ export async function getCalibrationHistory(positionId) {
     }
 
     const supervisor = supervisor_name && SUPERVISORS.find((s) => s.name === supervisor_name);
-    const supervisor_role = supervisor?.role || 'Supervisor';
-
+    
     const technician = ev.technician
       ? {
           name: ev.technician.full_name || ev.technician.email || '—',
@@ -133,12 +109,8 @@ export async function getCalibrationHistory(positionId) {
       : { name: 'Faro Mantenimiento', role: 'Operador' };
 
     return {
-      ...ev,
-      points,
-      observations_clean,
-      supervisor_name,
-      supervisor_role,
-      technician,
+      ...ev, points, observations_clean, supervisor_name,
+      supervisor_role: supervisor?.role || 'Supervisor', technician,
     };
   });
 
@@ -146,61 +118,35 @@ export async function getCalibrationHistory(positionId) {
 }
 
 export async function saveExternalCalibration(formData) {
-  const positionId  = (formData.get('position_id')          || '').toString();
-  const posMtto     = (formData.get('pos_mtto')             || '').toString();
-  const provider    = (formData.get('external_provider')    || '').toString().trim();
+  const positionId  = (formData.get('position_id') || '').toString();
+  const provider    = (formData.get('external_provider') || '').toString().trim();
   const certNumber  = (formData.get('external_cert_number') || '').toString().trim();
-  const performedAt = (formData.get('performed_at')         || '').toString();
+  const performedAt = (formData.get('performed_at') || '').toString();
   const file        = formData.get('pdf_file');
 
-  if (!positionId)  return { ok: false, error: 'Falta position_id.' };
-  if (!provider)    return { ok: false, error: 'Indica el proveedor que emitió el certificado.' };
-  if (!performedAt) return { ok: false, error: 'Indica la fecha de calibración.' };
-  if (!file || typeof file === 'string') return { ok: false, error: 'Adjunta el PDF del certificado.' };
-  if (!(file instanceof File)) return { ok: false, error: 'Archivo inválido.' };
-  if (file.size === 0) return { ok: false, error: 'El archivo está vacío.' };
-  if (file.size > 15 * 1024 * 1024) return { ok: false, error: 'El PDF supera 15 MB.' };
-
-  const isPdf = file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf');
-  if (!isPdf) return { ok: false, error: 'Sólo se aceptan archivos .pdf.' };
+  if (!positionId || !provider || !performedAt) return { ok: false, error: 'Faltan datos obligatorios.' };
+  if (!file || typeof file === 'string' || !(file instanceof File)) return { ok: false, error: 'PDF inválido.' };
 
   const supabase = createSupabaseServerClient();
-  const safePos  = (posMtto || positionId).replace(/[^A-Za-z0-9_-]/g, '');
-  const filename = `ext_${safePos}_${Date.now()}.pdf`;
+  const filename = `ext_${positionId}_${Date.now()}.pdf`;
 
-  const { error: uploadError } = await supabase
-    .storage.from('external_certs')
-    .upload(filename, file, { contentType: 'application/pdf', upsert: false });
-
-  if (uploadError) {
-    console.error('[saveExternalCalibration] upload error:', uploadError);
-    return { ok: false, error: `No se pudo subir el PDF: ${uploadError.message}` };
-  }
+  const { error: uploadError } = await supabase.storage.from('external_certs').upload(filename, file, { contentType: 'application/pdf' });
+  if (uploadError) return { ok: false, error: uploadError.message };
 
   const { data: urlData } = supabase.storage.from('external_certs').getPublicUrl(filename);
   const publicUrl = urlData?.publicUrl;
-  if (!publicUrl) {
-    await supabase.storage.from('external_certs').remove([filename]);
-    return { ok: false, error: 'No se pudo obtener la URL pública del PDF.' };
-  }
 
   const { data: event, error: insertError } = await supabase
     .from('calibration_events')
     .insert({
-      position_id:           positionId,
-      source:                'external',
-      result:                'PASS', 
-      performed_at:          new Date(performedAt).toISOString(),
-      external_provider:     provider,
-      external_cert_number:  certNumber || null,
-      external_cert_pdf_url: publicUrl,
-      observations:          `Certificado externo emitido por ${provider}` +
-                             (certNumber ? ` (N° ${certNumber})` : ''),
+      position_id: positionId, source: 'external', result: 'PASS', 
+      performed_at: new Date(performedAt).toISOString(), external_provider: provider,
+      external_cert_number: certNumber || null, external_cert_pdf_url: publicUrl,
+      observations: `Certificado externo emitido por ${provider}` + (certNumber ? ` (N° ${certNumber})` : ''),
     })
     .select('id').single();
 
   if (insertError) {
-    console.error('[saveExternalCalibration] insert error:', insertError);
     await supabase.storage.from('external_certs').remove([filename]);
     return { ok: false, error: insertError.message };
   }
