@@ -21,10 +21,12 @@
 import { useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { syncSapData } from '@/app/(app)/admin/sapActions';
+import { usePinGate } from '@/components/security/PinGate';
 
 export default function SapSyncPanel() {
   const router = useRouter();
   const fileInputRef = useRef(null);
+  const { requestPin } = usePinGate(); // Sprint 21: PIN gate
 
   const [file, setFile]         = useState(null);
   const [dragging, setDragging] = useState(false);
@@ -62,6 +64,13 @@ export default function SapSyncPanel() {
     if (!file) { setError('Adjunta el CSV primero.'); return; }
     setError(null);
     setResult(null);
+
+    // Sprint 21: PIN gate antes de cualquier escritura a Supabase.
+    const authorized = await requestPin('Sincronizar IW37N');
+    if (!authorized) {
+      setError('Operación cancelada: PIN no proporcionado.');
+      return;
+    }
 
     const fd = new FormData();
     fd.append('csv_file', file);
