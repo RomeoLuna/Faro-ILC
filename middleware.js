@@ -116,10 +116,22 @@ export const config = {
   matcher: [
     /*
      * Aplica el middleware a todas las rutas EXCEPTO:
-     *   - _next/static (archivos estáticos)
-     *   - _next/image  (optimización de imágenes)
-     *   - favicon.ico / imágenes públicas
+     *   - api/auth/*    → Sprint 20.2: el POST de login debe llegar
+     *                    directo al Route Handler de Node sin pasar por
+     *                    la Edge Function wrapper de Netlify. Esa wrapper
+     *                    aplica heurísticas de CSRF y reescribe x-forwarded-host
+     *                    en POSTs, lo cual estrangula la request con 403.
+     *                    Igual para futuros /api/auth/logout, /api/auth/callback.
+     *   - _next/static  → archivos estáticos del build
+     *   - _next/image   → optimización de imágenes
+     *   - favicon.ico   → ícono del sitio
+     *   - robots.txt    → robots para crawlers
+     *   - sitemap.xml   → sitemap para crawlers
+     *   - extensiones de imágenes/CSS/JS estáticos
+     *
+     * Otras rutas /api/* (admin, calibraciones, etc.) SÍ pasan por el
+     * middleware para que la sesión se refresque automáticamente.
      */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)',
+    '/((?!api/auth|_next/static|_next/image|favicon.ico|robots.txt|sitemap.xml|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|css|js)$).*)',
   ],
 };
