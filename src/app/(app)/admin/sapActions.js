@@ -1,16 +1,14 @@
 'use server';
 // app/(app)/admin/sapActions.js
 // =========================================================================
-// SERVER ACTIONS — Sincronización SAP (IW37N + IP24) — Sprint 16
+// SERVER ACTIONS — Sincronización SAP (PIN GATE - NO AUTH)
 // =========================================================================
 
 import { revalidatePath } from 'next/cache';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
-import { getCurrentUserWithProfile } from '@/lib/auth';
 
 const CHUNK_SIZE = 500;
 
-// Columnas exactas del CSV cruzado (IW37N purgado + IP24 mergeado).
 const EXPECTED_COLUMNS = [
   'Grupo planif.', 'Pos.mantenim.', 'Orden', 'Clase de orden', 'Cl.actividad PM',
   'Fe.inic.extrema', 'Ubicac.técnica', 'Equipo', 'Denominación', 'Denominación.1',
@@ -29,7 +27,6 @@ const COLUMN_MAP = {
   fecha_cierre: 'Fecha de cierre',
 };
 
-// ─── Mini-parser CSV (RFC 4180 simplificado) ────────────────────────────
 function parseCsv(text) {
   const norm = text.replace(/\r\n?/g, '\n').replace(/\n+$/, '');
   const rawLines = norm.split('\n');
@@ -65,27 +62,21 @@ function cleanText(v) {
   return s === '' ? null : s;
 }
 
-// ─── Parser Inteligente de Fechas (Soporta ISO y Formatos IP24 con /) ──
 function cleanMixedDate(v) {
   const s = cleanText(v);
   if (!s) return null;
   
-  // Si viene en formato ISO (YYYY-MM-DD HH:MM:SS o YYYY-MM-DD)
   if (/^\d{4}-\d{2}-\d{2}/.test(s)) {
     const d = new Date(s.split(' ')[0] + 'T00:00:00Z');
     if (!isNaN(d.getTime())) return s.split(' ')[0];
   }
   
-  // Si viene en formato IP24 (MM/DD/YYYY o DD/MM/YYYY)
   if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(s)) {
     const parts = s.split('/');
-    // SAP IP24 suele exportar en MM/DD/YYYY en algunas configuraciones regionales (ej. 12/31/2025)
-    // Asumimos MM = parts[0], DD = parts[1], YYYY = parts[2]. Si tu SAP es estricto DD/MM/YYYY, invertimos.
     let m = parts[0].padStart(2, '0');
     let d = parts[1].padStart(2, '0');
     const y = parts[2];
     
-    // Auto-corrección básica: si el "mes" es mayor a 12, sabemos que es DD/MM
     if (parseInt(m) > 12) {
       const temp = m; m = d; d = temp;
     }
@@ -97,12 +88,7 @@ function cleanMixedDate(v) {
   return null;
 }
 
-// =========================================================================
 export async function syncSapData(formData) {
-  const session = await getCurrentUserWithProfile();
-  if (!session) return { ok: false, error: 'No autenticado.' };
-  if (session.profile?.role !== 'admin') return { ok: false, error: 'Solo admin puede sincronizar SAP.' };
-
   const file = formData.get('csv_file');
   if (!file || typeof file === 'string' || !(file instanceof File)) {
     return { ok: false, error: 'Archivo inválido.' };
@@ -134,9 +120,9 @@ export async function syncSapData(formData) {
 
     const pos_mtto     = cleanText(cells[idx[COLUMN_MAP.pos_mtto]]);
     const wo_number    = cleanText(cells[idx[COLUMN_MAP.wo_number]]);
-    const planned_date = cleanMixedDate(cells[idx[COLUMN_MAP.planned_date]]); // Fe.inic.extrema
-    const fe_planif    = cleanMixedDate(cells[idx[COLUMN_MAP.fe_planif]]);    // Fe.planif. (IP24)
-    const fecha_cierre = cleanMixedDate(cells[idx[COLUMN_MAP.fecha_cierre]]); // Fecha de cierre (IP24)
+    const planned_date = cleanMixedDate(cells[idx[COLUMN_MAP.planned_date]]); 
+    const fe_planif    = cleanMixedDate(cells[idx[COLUMN_MAP.fe_planif]]);    
+    const fecha_cierre = cleanMixedDate(cells[idx[COLUMN_MAP.fecha_cierre]]); 
     const status       = cleanText(cells[idx[COLUMN_MAP.status]]);
     const short_text   = cleanText(cells[idx[COLUMN_MAP.short_text]]);
 
