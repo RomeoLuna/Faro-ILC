@@ -1,50 +1,35 @@
 'use client';
 // components/faro/RowActions.jsx
 // =========================================================================
-// ROW ACTIONS — Client Component con role gate
+// ROW ACTIONS — Client Component (NO AUTH - PIN GATE)
 // -------------------------------------------------------------------------
 // Botones por fila:
-//   - "Histórico"     → abre <HistoryModal /> (Sprint 7) — TODOS los roles
-//   - "Calibrar"      → abre <CalibrationModal /> — admin/tecnico
-//   - "Cert. externo" → abre <ExternalCertModal /> — admin/tecnico
-//
-// El botón Histórico es read-only (sólo consulta + re-descarga de PDFs),
-// por eso lo ven incluso los viewers — necesitan poder auditar.
+//   - "Histórico"     → abre <HistoryModal />
+//   - "Calibrar"      → abre <CalibrationModal /> (Protegido por PIN interno)
+//   - "Cert. externo" → abre <ExternalCertModal /> (Protegido por PIN interno)
 // =========================================================================
 
-import { useCanSignCalibration } from '@/components/auth/UserProvider';
-
 export default function RowActions({ position }) {
-  const canSign = useCanSignCalibration();
-
-  // Botón Histórico — siempre visible
-  const historyButton = (
-    <button
-      type="button"
-      onClick={() => window.dispatchEvent(new CustomEvent('open:history', { detail: position }))}
-      title="Ver historial de calibraciones"
-      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-neutral-300 text-neutral-700 text-[11.5px] font-semibold hover:bg-neutral-50"
-    >
-      {/* Icono de reloj/historia */}
-      <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <circle cx="12" cy="12" r="10" />
-        <polyline points="12 6 12 12 16 14" />
-      </svg>
-      Histórico
-    </button>
-  );
-
-  if (!canSign) {
-    return (
-      <div className="flex justify-end gap-1.5">
-        {historyButton}
-      </div>
-    );
-  }
+  // En este nuevo modelo sin roles, todos los botones son visibles.
+  // El bloqueo se realiza vía PIN Gate al intentar guardar.
 
   return (
     <div className="flex justify-end gap-1.5">
-      {historyButton}
+      {/* Botón Histórico */}
+      <button
+        type="button"
+        onClick={() => window.dispatchEvent(new CustomEvent('open:history', { detail: position }))}
+        title="Ver historial de calibraciones"
+        className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-neutral-300 text-neutral-700 text-[11.5px] font-semibold hover:bg-neutral-50"
+      >
+        <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="12" cy="12" r="10" />
+          <polyline points="12 6 12 12 16 14" />
+        </svg>
+        Histórico
+      </button>
+
+      {/* Botón Calibrar */}
       <button
         type="button"
         onClick={() => window.dispatchEvent(new CustomEvent('open:calibration', { detail: position }))}
@@ -52,6 +37,8 @@ export default function RowActions({ position }) {
       >
         Calibrar
       </button>
+
+      {/* Botón Certificado Externo */}
       <button
         type="button"
         onClick={() => window.dispatchEvent(new CustomEvent('open:external-cert', { detail: position }))}

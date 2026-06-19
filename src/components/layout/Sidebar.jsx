@@ -1,17 +1,17 @@
 'use client';
 // components/layout/Sidebar.jsx
 // =========================================================================
-// SIDEBAR PERSISTENTE (Client Component) — Sprint 11
+// SIDEBAR PERSISTENTE (Client Component) — NO AUTH
 // -------------------------------------------------------------------------
 // Estructura:
 //   1. Marca AB
 //   2. <SectionSwitcher /> — tarjetas Envasado / Ingeniería
 //   3. Menú dinámico según la sección activa (detectada por la ruta)
 //   4. Bloque "Compartido" (Certificados, Catálogo de Patrones)
-//   5. Bloque "Administración" — CONDICIONAL: sólo visible para role=admin
+//   5. Bloque "Administración" — Visible para todos (acciones protegidas por PIN)
 //
 // La sección activa se infiere del pathname:
-//   /envasado/*   → menú Envasado
+//   /envasado/* → menú Envasado
 //   /ingenieria/* → menú Ingeniería
 //   /certificados, /catalogos, /admin → no fuerza sección (mantiene la última)
 // =========================================================================
@@ -19,7 +19,6 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import SectionSwitcher from './SectionSwitcher';
-import { useUser } from '@/components/auth/UserProvider';
 
 // Mapas de navegación por sección. Centralizados aquí para que agregar
 // nuevas páginas sea un solo edit.
@@ -110,9 +109,8 @@ export default function Sidebar() {
   const section = pathname.startsWith('/ingenieria') ? 'ingenieria' : 'envasado';
   const links = NAV[section];
 
-  // Lectura del profile para gating del bloque Admin
-  const ctx = useUser();
-  const isAdmin = ctx?.profile?.role === 'admin';
+  // En este nuevo modelo sin auth, todos tienen acceso a ver la pestaña de administración.
+  const isAdmin = true;
 
   return (
     <aside className="bg-brand-ink text-white flex flex-col sticky top-0 h-screen">
@@ -152,7 +150,7 @@ export default function Sidebar() {
           ))}
         </div>
 
-        {/* Bloque Administración — sólo visible para role=admin */}
+        {/* Bloque Administración — Visible para todos */}
         {isAdmin && (
           <div className="mt-4 pt-3 border-t border-brand-line/60 space-y-0.5">
             <div className="text-[10px] uppercase tracking-[0.12em] text-neutral-500 px-3 pt-2 pb-1">
@@ -166,7 +164,7 @@ export default function Sidebar() {
       {/* Footer */}
       <div className="px-5 py-3 border-t border-brand-line/60 text-[11px] text-neutral-400">
         <span className="inline-block w-1.5 h-1.5 rounded-full bg-brand-pass mr-1.5"></span>
-        Backend pausado · UI v2
+        Backend en ejecución · UI v2
       </div>
     </aside>
   );
