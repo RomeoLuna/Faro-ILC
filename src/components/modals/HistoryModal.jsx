@@ -296,31 +296,58 @@ function EventCard({ event, downloading, onDownload }) {
           </div>
         )}
 
-        {/* Acción: Descargar PDF */}
-        <div className="flex justify-end">
-          <button
-            type="button"
-            onClick={onDownload}
-            disabled={downloading || (isExternal && !event.external_cert_pdf_url)}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-brand-ink text-white text-[11.5px] font-semibold hover:bg-brand-steel disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {downloading ? (
-              <>
-                <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="10" strokeOpacity="0.25"/>
-                  <path d="M22 12a10 10 0 0 1-10 10"/>
-                </svg>
-                Generando…
-              </>
-            ) : (
-              <>
-                <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
-                </svg>
-                {isExternal ? 'Ver PDF original' : 'Descargar PDF'}
-              </>
-            )}
-          </button>
+        {/* Acciones — Sprint 28: cohabitan PDF interno y SharePoint link */}
+        <div className="flex justify-end items-center gap-2 flex-wrap">
+
+          {/* Botón SharePoint si hay certificate_url */}
+          {event.certificate_url && (
+            <a
+              href={event.certificate_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={event.certificate_url}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-brand-env text-white text-[11.5px] font-semibold hover:bg-brand-env/80"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M14 3h7v7M10 14L21 3M21 14v7H3V3h7" />
+              </svg>
+              Ver Certificado
+            </a>
+          )}
+
+          {/* Botón PDF — visible si hay PDF, o si es interno (lo genera al vuelo) */}
+          {(!isExternal || event.external_cert_pdf_url) && (
+            <button
+              type="button"
+              onClick={onDownload}
+              disabled={downloading}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md bg-brand-ink text-white text-[11.5px] font-semibold hover:bg-brand-steel disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {downloading ? (
+                <>
+                  <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="12" cy="12" r="10" strokeOpacity="0.25"/>
+                    <path d="M22 12a10 10 0 0 1-10 10"/>
+                  </svg>
+                  Generando…
+                </>
+              ) : (
+                <>
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/>
+                  </svg>
+                  {isExternal ? 'Ver PDF original' : 'Descargar PDF'}
+                </>
+              )}
+            </button>
+          )}
+
+          {/* Caso extremo: externo sin PDF y sin URL — mensaje informativo */}
+          {isExternal && !event.external_cert_pdf_url && !event.certificate_url && (
+            <span className="text-[10.5px] text-neutral-400 italic">
+              Sin certificado adjunto
+            </span>
+          )}
         </div>
       </div>
     </li>

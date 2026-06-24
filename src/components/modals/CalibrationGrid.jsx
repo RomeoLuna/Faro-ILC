@@ -44,21 +44,40 @@ export default function CalibrationGrid({
   readOnly = false,
   onChange,
 }) {
-  // Estado mínimo: la lectura escrita por el técnico (9 strings)
+  // Estado: lecturas del técnico (9 strings)
   const [readings, setReadings] = useState(() => Array(9).fill(''));
+  // Sprint 31: % editable por fila. Iniciamos con los canónicos del HTML
+  // (0/25/50/75/100/75/50/25/0). El técnico los puede ajustar caso por caso.
+  const [pcts, setPcts] = useState(() => PUNTOS.map((p) => String(p.pct)));
+
+  // ── Helper: parsea un pct con clamp [0..100] ─────────────────────────────
+  function parsePct(raw) {
+    const n = Number(raw);
+    if (!Number.isFinite(n)) return null;
+    if (n < 0) return 0;
+    if (n > 100) return 100;
+    return n;
+  }
 
   // ── Cómputo derivado de los 9 puntos ────────────────────────────────────
   const computed = PUNTOS.map((punto, i) => {
     const reading  = readings[i];
+    // Sprint 31: pct dinámico (caer al canónico si el técnico borró)
+    const pctEffective = parsePct(pcts[i]);
+    const pctValid = pctEffective != null;
+    const pctForCalc = pctValid ? pctEffective : punto.pct;
+    // Nominal mA recalculado por fila: 4 mA + (pct/100)*16 mA
+    const nominalMaDynamic = 4 + (pctForCalc / 100) * 16;
     const hasRange =
       rangeMin !== '' && rangeMin != null &&
       rangeMax !== '' && rangeMax != null;
 
     // Llamamos a calcularPunto para obtener {maComputed, errorPct, result}
+    // Sprint 31: usar nominalMaDynamic (recalculado del pct editable)
     const { maComputed, errorPct, result } = calcularPunto({
       modo,
       valorEntrada: reading,
-      nominalMa: punto.nominal_ma,
+      nominalMa: nominalMaDynamic,
       rangoMin: rangeMin,
       rangoMax: rangeMax,
       tolerancia: tolerance,
@@ -73,7 +92,7 @@ export default function CalibrationGrid({
       if (hasRange) {
         const fisicoFromInput = reading !== ''
           ? maToFisico(Number(reading), rangeMin, rangeMax)
-          : maToFisico(punto.nominal_ma, rangeMin, rangeMax);
+          : maToFisico(nominalMaDynamic, rangeMin, rangeMax);
         col4Display = `${fisicoFromInput.toFixed(2)} ${unit}`.trim();
         col4Muted = reading === ''; // gris si es sólo el esperado
       } else {
@@ -87,7 +106,7 @@ export default function CalibrationGrid({
         col4Muted = false;
       } else if (hasRange) {
         // Sin input → mostrar entre paréntesis el físico esperado (igual que v4)
-        const vEsperado = rangeMin + (rangeMax - rangeMin) * (punto.pct / 100);
+        const vEsperado = rangeMin + (rangeMax - rangeMin) * (pctForCalc / 100);
         col4Display = `(${Number(vEsperado).toFixed(2)} ${unit})`.trim();
         col4Muted = true;
       } else {
@@ -98,12 +117,12 @@ export default function CalibrationGrid({
 
     return {
       point_index: i,
-      pct: punto.pct,
-      phase: punto.fase,
-      nominal_ma: punto.nominal_ma,
+      pct: pctForCalc,                    // Sprint 31: pct efectivo (puede ser custom)
+      phase: punto.fase,                  // fase queda fija según el índice
+      nominal_ma: nominalMaDynamic,       // Sprint 31: recalculado del pct
       // Datos crudos para el payload
       expected_value: hasRange
-        ? rangeMin + (rangeMax - rangeMin) * (punto.pct / 100)
+        ? rangeMin + (rangeMax - rangeMin) * (pctForCalc / 100)
         : null,
       reading_ma:    modo === 'mA'     && reading !== '' ? Number(reading) : null,
       reading_value: modo === 'fisico' && reading !== '' ? Number(reading) : null,
@@ -129,11 +148,17 @@ export default function CalibrationGrid({
       onChange({ points: payload, globalResult });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [readings.join('|'), rangeMin, rangeMax, tolerance, modo]);
+  }, [readings.join('|'), pcts.join('|'), rangeMin, rangeMax, tolerance, modo]);
 
   function setReading(i, v) {
     if (readOnly) return;
     setReadings((prev) => prev.map((x, idx) => (idx === i ? v : x)));
+  }
+
+  // Sprint 31: setter del % editable por fila
+  function setPct(i, v) {
+    if (readOnly) return;
+    setPcts((prev) => prev.map((x, idx) => (idx === i ? v : x)));
   }
 
   // ── Encabezados dinámicos (swap por modo, idéntico a v4) ────────────────
@@ -193,9 +218,21 @@ export default function CalibrationGrid({
                   <td className={`px-3 py-2 text-center uppercase text-[11px] font-bold ${phaseTone}`}>
                     {row.phase}
                   </td>
-                  <td className="px-3 py-2 text-center font-bold">{row.pct}%</td>
-                  <td className="px-3 py-2 text-center text-neutral-700">
-                    {row.nominal_ma.toFixed(2)}
+                  {/* Sprint 31: Punto (%) editable */}
+                  <td className="px-3 py-2 text-center">
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="100"
+                      value={pcts[i]}
+                      onChange={(e) => setPct(i, e.target.value)}
+                      disabled={readOnly}
+                      className="w-16 px-1 py-1 border-2 border-blue-400 rounded-md text-center font-bold text-[13px] bg-blue-50/50 focus:outline-none focus:ring-2 focus:ring-blue-400/40 disabled:bg-neutral-100 disabled:border-neutral-300 disabled:text-neutral-500"
+                    />
+                  </td>
+                  <td className="px-3 py-2 text-center text-neutral-700 bg-emerald-50/30">
+                    {row.nominal_ma.toFixed(2)} mA
                   </td>
 
                   {/* Columna 4 — Esperado (modo mA) o mA derivado (modo físico) */}
