@@ -402,7 +402,13 @@ export async function saveExternalCalibration(formData) {
       source:                'external',
       result:                'PASS',
       performed_at:          new Date(performedAt).toISOString(),
-      performed_by:          session.user.id,
+      // Sprint 32: Tras eliminar auth (Sprint 21), session.user.id es el
+      // string 'public-operator' del MOCK_OPERATOR — Supabase rechaza eso
+      // porque la columna es uuid references auth.users(id). El schema
+      // permite NULL ("on delete set null"), así que lo dejamos NULL.
+      // La trazabilidad del operador que cargó el cert externo no se
+      // captura por ahora (el provider del cert ya es la firma legal).
+      performed_by:          null,
       external_provider:     provider,
       external_cert_number:  certNumber || null,
       external_cert_pdf_url: publicUrl,            // null si solo URL
