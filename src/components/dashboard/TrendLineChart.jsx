@@ -1,65 +1,161 @@
 'use client';
 // components/dashboard/TrendLineChart.jsx
 // =========================================================================
-// TREND LINE CHART — Sprint 17 (slave del lifted state)
+// TREND LINE CHART — Sprint 34c (misma regla simple que Compliance)
 // -------------------------------------------------------------------------
-// Esclavo de ComplianceChart. NO tiene selector propio: recibe `period`
-// del padre <FaroDashboardClient /> y se re-renderiza automáticamente
-// cuando el usuario cambia el mes en el Maestro (ComplianceChart).
+// REGLAS (acordadas con la planta):
 //
-// VISUALIZACIÓN
-//   Barra apilada horizontal — la altura total = 100% de las POS del período
-//     Rojo (brand-fail) → VENCIDO
-//     Verde (brand-pass) → VIGENTE + PROXIMO_7 + NUNCA_CALIBRADO
+//   • Filtro del universo (período específico):
+//       OTs cuya fecha de planificación cae en el mes
+//       (planned_date EN el mes O fe_planif EN el mes)
 //
-// FILTRO POR PERÍODO
-//   - 'all'  → todas las posiciones recibidas (sin filtrar por fecha)
-//   - otros  → POS cuyo next_sap_date cae dentro del período seleccionado
+//   • Verde (sana):
+//       AND adicional: NOTI en status AND fecha_cierre dentro del mes
 //
-// Props:
-//   positions : array filtrado por la tabla maestra (search + área + estado)
-//   period    : string ('previous' | 'current' | 'next' | 'all')
+//   • Rojo (vencida/incompleta):
+//       todo lo demás (no cerrada en el mes — late, early, o sin cierre)
+//
+//   • Modo "Todos los meses":
+//       lógica original positions-based (preservada). VENCIDO → rojo,
+//       resto (VIGENTE/PROXIMO_7/NUNCA_CALIBRADO) → verde.
+//
+// La regla está alineada con ComplianceChart 1:1 — los 2 gráficos
+// muestran exactamente el mismo conteo y porcentaje.
 // =========================================================================
 
-import { useMemo } from 'react';
-import { periodRange, inRange, periodLabel } from '@/lib/periodRange';
+import { useEffect, useMemo, useState } from 'react';
+import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { periodRange, periodLabel, parseLocalDate } from '@/lib/periodRange';
+
+function isNotificada(status) {
+  if (!status) return false;
+  return status.toUpperCase().includes('NOTI');
+}
+
+function isoDay(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function dateInRange(isoStr, start, end) {
+  if (!isoStr || !start || !end) return false;
+  const d = parseLocalDate(isoStr);
+  if (!d) return false;
+  return d >= start && d < end;
+}
 
 export default function TrendLineChart({ positions, period }) {
+  const isAll = period === 'all';
+
+  const [otRows, setOtRows] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const posKeys = useMemo(() => {
+    const set = new Set();
+    for (const p of positions) if (p.pos_mtto) set.add(p.pos_mtto);
+    return Array.from(set);
+  }, [positions]);
+
+  // ── Fetch SOLO en modo período específico ──────────────────────────────
+  useEffect(() => {
+    if (isAll) {
+      setOtRows(null);
+      setLoading(false);
+      setErr(null);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setErr(null);
+
+    (async () => {
+      const supabase = createSupabaseBrowserClient();
+      let query = supabase
+        .from('sap_work_orders')
+        .select('wo_number, pos_mtto, status, planned_date, fe_planif, fecha_cierre');
+
+      const [start, end] = periodRange(period);
+      if (start && end) {
+        const s = isoDay(start);
+        const e = isoDay(end);
+        query = query.or(
+          `and(planned_date.gte.${s},planned_date.lt.${e}),` +
+          `and(fe_planif.gte.${s},fe_planif.lt.${e})`
+        );
+      }
+
+      if (posKeys.length > 0 && posKeys.length <= 1000) {
+        query = query.in('pos_mtto', posKeys);
+      }
+
+      const { data, error } = await query;
+      if (cancelled) return;
+      if (error) {
+        setErr(error.message);
+        setOtRows([]);
+      } else {
+        setOtRows(data || []);
+      }
+      setLoading(false);
+    })();
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period, posKeys.join('|'), isAll]);
+
+  // ── Conteo ─────────────────────────────────────────────────────────────
   const data = useMemo(() => {
+    // Modo 'all' — lógica vieja positions-based
+    if (isAll) {
+      let vencidas = 0;
+      let vigentes = 0;
+      for (const p of positions) {
+        if (p.status === 'VENCIDO') vencidas++;
+        else if (
+          p.status === 'VIGENTE' ||
+          p.status === 'PROXIMO_7' ||
+          p.status === 'NUNCA_CALIBRADO'
+        ) {
+          vigentes++;
+        }
+      }
+      const total    = vencidas + vigentes;
+      const pctRojo  = total ? (vencidas / total) * 100 : 0;
+      const pctVerde = total ? (vigentes / total) * 100 : 0;
+      const ratio    = total ? Math.round(pctVerde) : null;
+      return { vencidas, vigentes, total, pctRojo, pctVerde, ratio };
+    }
+
+    // Período específico — misma regla que ComplianceChart
+    if (!otRows) {
+      return { vencidas: 0, vigentes: 0, total: 0, pctRojo: 0, pctVerde: 0, ratio: null };
+    }
+
     const [start, end] = periodRange(period);
-
-    // 1) Filtrar al subset que corresponde al período seleccionado.
-    //    'all' deja pasar todo (inRange devuelve true cuando start/end son null).
-    const subset = positions.filter((p) => {
-      if (period === 'all') return true;
-      return p.next_sap_date && inRange(p.next_sap_date, start, end);
-    });
-
-    // 2) Conteo binario: rojo (VENCIDO) vs verde (todo lo demás considerado "OK").
     let vencidas = 0;
     let vigentes = 0;
-    for (const p of subset) {
-      if (p.status === 'VENCIDO') vencidas++;
-      else if (
-        p.status === 'VIGENTE' ||
-        p.status === 'PROXIMO_7' ||
-        p.status === 'NUNCA_CALIBRADO'
-      ) {
-        vigentes++;
-      }
+
+    for (const ot of otRows) {
+      const cerradaEnPeriodo =
+        isNotificada(ot.status) &&
+        dateInRange(ot.fecha_cierre, start, end);
+      if (cerradaEnPeriodo) vigentes++;
+      else                  vencidas++;
     }
 
     const total    = vencidas + vigentes;
     const pctRojo  = total ? (vencidas / total) * 100 : 0;
     const pctVerde = total ? (vigentes / total) * 100 : 0;
-    const ratio    = total ? Math.round(pctVerde) : null; // % "sano"
-
+    const ratio    = total ? Math.round(pctVerde) : null;
     return { vencidas, vigentes, total, pctRojo, pctVerde, ratio };
-  }, [positions, period]);
+  }, [otRows, period, positions, isAll]);
 
   return (
     <div className="bg-white rounded-xl border border-neutral-200 shadow-card h-full flex flex-col">
-      {/* Header */}
       <div className="px-5 py-3 border-b border-neutral-200 bg-neutral-50 flex items-center justify-between gap-2">
         <div>
           <div className="text-[12px] uppercase tracking-wider text-neutral-600 font-bold">
@@ -70,7 +166,6 @@ export default function TrendLineChart({ positions, period }) {
           </div>
         </div>
 
-        {/* Badge "sano %" — sólo si hay datos */}
         {data.ratio != null && (
           <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-brand-passSoft/60 border border-brand-pass/30 shrink-0">
             <span className="text-[10px] uppercase tracking-wider font-bold text-brand-pass">Sano</span>
@@ -79,21 +174,31 @@ export default function TrendLineChart({ positions, period }) {
         )}
       </div>
 
-      {/* Cuerpo */}
       <div className="p-5 flex-1 flex flex-col justify-center">
-        {data.total === 0 ? (
+        {loading ? (
+          <div className="flex items-center gap-2 text-[12px] text-brand-env py-2">
+            <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10" strokeOpacity="0.25"/>
+              <path d="M22 12a10 10 0 0 1-10 10"/>
+            </svg>
+            Cargando…
+          </div>
+        ) : err ? (
+          <div className="text-[12px] text-brand-fail bg-brand-failSoft border border-brand-fail/30 rounded-md px-3 py-2">
+            Error: {err}
+          </div>
+        ) : data.total === 0 ? (
           <div className="text-center text-[12px] italic text-neutral-400 py-6">
-            Sin POS con fecha planificada en este período
+            {isAll ? 'Sin POS' : 'Sin OTs planificadas en este período'}
           </div>
         ) : (
           <>
-            {/* Barra apilada */}
             <div className="flex h-7 rounded-lg overflow-hidden border border-neutral-200 bg-neutral-100">
               {data.pctRojo > 0 && (
                 <div
                   className="bg-brand-fail h-full transition-all duration-300 flex items-center justify-center text-[10px] font-bold text-white"
                   style={{ width: `${data.pctRojo}%` }}
-                  title={`VENCIDO: ${data.vencidas} (${data.pctRojo.toFixed(0)}%)`}
+                  title={`Vencidas: ${data.vencidas} (${data.pctRojo.toFixed(0)}%)`}
                 >
                   {data.pctRojo >= 10 && `${data.pctRojo.toFixed(0)}%`}
                 </div>
@@ -109,14 +214,26 @@ export default function TrendLineChart({ positions, period }) {
               )}
             </div>
 
-            {/* Leyenda + conteos */}
             <div className="mt-4 flex items-center justify-between gap-4 text-[12px]">
-              <LegendCell label="Vencidas" count={data.vencidas} dot="bg-brand-fail" text="text-brand-fail" />
-              <LegendCell label="Sanas (Vigente + Próximo + Sin OT)" count={data.vigentes} dot="bg-brand-pass" text="text-brand-pass" />
+              <LegendCell
+                label={isAll ? 'POS vencidas' : 'Vencidas (no cerradas en el mes)'}
+                count={data.vencidas}
+                dot="bg-brand-fail"
+                text="text-brand-fail"
+              />
+              <LegendCell
+                label={isAll ? 'POS sanas' : 'Sanas (cerradas en el mes)'}
+                count={data.vigentes}
+                dot="bg-brand-pass"
+                text="text-brand-pass"
+              />
             </div>
 
             <div className="mt-3 pt-3 border-t border-neutral-100 text-[11px] text-neutral-500 flex items-center justify-between">
-              <span>Total POS en el período: <strong className="text-neutral-800">{data.total}</strong></span>
+              <span>
+                Total {isAll ? 'POS' : 'OTs en el período'}:{' '}
+                <strong className="text-neutral-800">{data.total}</strong>
+              </span>
               <span className="text-[10.5px] text-neutral-400">Reactivo al selector de Cumplimiento</span>
             </div>
           </>
@@ -126,7 +243,6 @@ export default function TrendLineChart({ positions, period }) {
   );
 }
 
-// ─── Celda de leyenda ───────────────────────────────────────────────────
 function LegendCell({ label, count, dot, text }) {
   return (
     <div className="flex items-center gap-2 min-w-0">

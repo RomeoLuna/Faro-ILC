@@ -1,67 +1,172 @@
 'use client';
 // components/dashboard/ComplianceChart.jsx
 // =========================================================================
-// COMPLIANCE CHART — Sprint 17 (refactor: Master del lifted state)
+// COMPLIANCE CHART — Sprint 34c (regla simple según usuario)
 // -------------------------------------------------------------------------
-// CAMBIO ARQUITECTÓNICO (Sprint 17):
-//   Este componente YA NO posee el estado `period`. Ahora lo recibe del
-//   padre <FaroDashboardClient /> junto con `setPeriod`. Sigue siendo el
-//   "Maestro" en el sentido de que es el único que renderiza el <select>
-//   visible — pero el estado vive arriba para que <StatusDonutChart /> y
-//   <TrendLineChart /> se re-rendericen sincronizados.
+// REGLAS (acordadas con la planta):
 //
-// Helpers de fecha viven en `@/lib/periodRange` para garantizar que los
-// tres gráficos comparten una sola fuente de verdad.
+//   • Filtro del universo (período específico, p.ej. Junio 2026):
+//       OTs cuya fecha de planificación cae en el mes
+//       (planned_date EN el mes O fe_planif EN el mes)
 //
-// Props:
-//   positions : array filtrado por la tabla (search + área + estado)
-//   period    : string ('previous' | 'current' | 'next' | 'all')
-//   setPeriod : (value) => void  — el único componente que la invoca
+//   • Positiva (cerrada — verde):
+//       AND adicional: fue cerrada/notificada en ese mismo mes
+//       (status contiene NOTI Y fecha_cierre cae en el mes)
+//
+//   • Negativa (abierta — rojo):
+//       todo el resto del universo del filtro
+//       (no cerrada todavía, o cerrada pero en otro mes — late/early)
+//
+//   • Modo "Todos los meses":
+//       lógica original positions-based del Sprint 17 (preservada).
+//       Iteramos POS, cuentamos si tiene OT cerrada (last_closed_wo) o
+//       abierta (sap_open_wo). Funcionaba bien — no se toca.
 // =========================================================================
 
-import { useMemo } from 'react';
-import { PERIODS, periodRange, inRange, periodLabel } from '@/lib/periodRange';
+import { useEffect, useMemo, useState } from 'react';
+import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import { PERIODS, periodRange, periodLabel, parseLocalDate } from '@/lib/periodRange';
+
+function isNotificada(status) {
+  if (!status) return false;
+  return status.toUpperCase().includes('NOTI');
+}
+
+function isoDay(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// "¿está esta fecha dentro de [start, end)?" — start/end son Date locales
+function dateInRange(isoStr, start, end) {
+  if (!isoStr || !start || !end) return false;
+  const d = parseLocalDate(isoStr);
+  if (!d) return false;
+  return d >= start && d < end;
+}
 
 export default function ComplianceChart({ positions, period, setPeriod }) {
+  const isAll = period === 'all';
+
+  const [otRows, setOtRows] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState(null);
+
+  const posKeys = useMemo(() => {
+    const set = new Set();
+    for (const p of positions) if (p.pos_mtto) set.add(p.pos_mtto);
+    return Array.from(set);
+  }, [positions]);
+
+  // ── Fetch SOLO en modo período específico ──────────────────────────────
+  // En modo 'all' usamos directamente las positions (lógica vieja Sprint 17).
+  useEffect(() => {
+    if (isAll) {
+      setOtRows(null);
+      setLoading(false);
+      setErr(null);
+      return;
+    }
+
+    let cancelled = false;
+    setLoading(true);
+    setErr(null);
+
+    (async () => {
+      const supabase = createSupabaseBrowserClient();
+      let query = supabase
+        .from('sap_work_orders')
+        .select('wo_number, pos_mtto, status, planned_date, fe_planif, fecha_cierre');
+
+      // Filtro del universo: planned_date O fe_planif EN el mes
+      const [start, end] = periodRange(period);
+      if (start && end) {
+        const s = isoDay(start);
+        const e = isoDay(end);
+        query = query.or(
+          `and(planned_date.gte.${s},planned_date.lt.${e}),` +
+          `and(fe_planif.gte.${s},fe_planif.lt.${e})`
+        );
+      }
+
+      if (posKeys.length > 0 && posKeys.length <= 1000) {
+        query = query.in('pos_mtto', posKeys);
+      }
+
+      const { data, error } = await query;
+      if (cancelled) return;
+      if (error) {
+        setErr(error.message);
+        setOtRows([]);
+      } else {
+        setOtRows(data || []);
+      }
+      setLoading(false);
+    })();
+
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [period, posKeys.join('|'), isAll]);
+
+  // ── Conteo ─────────────────────────────────────────────────────────────
   const stats = useMemo(() => {
+    // Modo 'all' — lógica vieja del Sprint 17 (preservada)
+    if (isAll) {
+      let closed = 0;
+      let open   = 0;
+      for (const p of positions) {
+        if (p.last_closed_wo) closed++;
+        if (p.sap_open_wo)    open++;
+      }
+      const total      = closed + open;
+      const pctClosed  = total ? (closed / total) * 100 : 0;
+      const pctOpen    = total ? (open   / total) * 100 : 0;
+      const compliance = total ? Math.round(pctClosed) : null;
+      return { closed, open, total, pctClosed, pctOpen, compliance };
+    }
+
+    // Período específico — OT-based con regla del usuario
+    if (!otRows) {
+      return { closed: 0, open: 0, total: 0, pctClosed: 0, pctOpen: 0, compliance: null };
+    }
+
     const [start, end] = periodRange(period);
     let closed = 0;
     let open   = 0;
 
-    for (const p of positions) {
-      if (period === 'all') {
-        if (p.last_closed_wo) closed++;
-        if (p.sap_open_wo)    open++;
-      } else {
-        if (p.last_sap_date && inRange(p.last_sap_date, start, end)) closed++;
-        if (p.next_sap_date && inRange(p.next_sap_date, start, end)) open++;
-      }
+    for (const ot of otRows) {
+      // Cerrada positiva = NOTI en status AND fecha_cierre dentro del mes
+      const cerradaEnPeriodo =
+        isNotificada(ot.status) &&
+        dateInRange(ot.fecha_cierre, start, end);
+      if (cerradaEnPeriodo) closed++;
+      else                  open++;
     }
 
     const total      = closed + open;
     const pctClosed  = total ? (closed / total) * 100 : 0;
     const pctOpen    = total ? (open   / total) * 100 : 0;
-    // Tasa de cumplimiento = cerradas / (cerradas + abiertas)
     const compliance = total ? Math.round(pctClosed) : null;
-
     return { closed, open, total, pctClosed, pctOpen, compliance };
-  }, [positions, period]);
+  }, [otRows, period, positions, isAll]);
 
   return (
     <div className="bg-white rounded-xl border border-neutral-200 shadow-card mb-6">
-      {/* Header del card */}
       <div className="px-5 py-3 border-b border-neutral-200 bg-neutral-50 flex items-center justify-between flex-wrap gap-3">
         <div>
           <div className="text-[12px] uppercase tracking-wider text-neutral-600 font-bold">
             Cumplimiento SAP
           </div>
           <div className="text-[10.5px] text-neutral-500 mt-0.5">
-            Proporción de OTs cerradas vs abiertas — {periodLabel(period)}
+            {isAll
+              ? 'Todas las POS — proporción de OTs cerradas vs abiertas'
+              : `OTs planificadas para ${periodLabel(period)} · cerradas en el mes vs no`}
           </div>
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Tasa de cumplimiento global del período */}
           {stats.compliance != null && (
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-brand-passSoft/60 border border-brand-pass/30">
               <span className="text-[10px] uppercase tracking-wider font-bold text-brand-pass">Cumplimiento</span>
@@ -69,9 +174,6 @@ export default function ComplianceChart({ positions, period, setPeriod }) {
             </div>
           )}
 
-          {/* Selector de período — único <select> visible del dashboard.
-              Controla el estado del padre (lifted up) y por lo tanto
-              re-renderiza StatusDonutChart y TrendLineChart en sincronía. */}
           <select
             value={period}
             onChange={(e) => setPeriod(e.target.value)}
@@ -84,48 +186,67 @@ export default function ComplianceChart({ positions, period, setPeriod }) {
         </div>
       </div>
 
-      {/* Barras */}
       <div className="p-5 space-y-4">
-        <Bar
-          label="OT Cerradas"
-          count={stats.closed}
-          pct={stats.pctClosed}
-          barClass="bg-brand-pass"
-          textClass="text-brand-pass"
-          dotClass="bg-brand-pass"
-        />
-        <Bar
-          label="OT Abiertas"
-          count={stats.open}
-          pct={stats.pctOpen}
-          barClass="bg-brand-warn"
-          textClass="text-amber-700"
-          dotClass="bg-brand-warn"
-        />
+        {loading && (
+          <div className="flex items-center gap-2 text-[12px] text-brand-env">
+            <svg className="w-4 h-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10" strokeOpacity="0.25"/>
+              <path d="M22 12a10 10 0 0 1-10 10"/>
+            </svg>
+            Cargando OTs del período…
+          </div>
+        )}
 
-        {/* Pie del card */}
-        <div className="pt-3 border-t border-neutral-100 flex items-center justify-between text-[11.5px] text-neutral-500 flex-wrap gap-2">
-          <span>
-            Total OTs en el período:{' '}
-            <strong className="text-neutral-800">{stats.total}</strong>
-          </span>
-          {stats.total === 0 && (
-            <span className="italic text-neutral-400">Sin movimientos en este período</span>
-          )}
-          <span className="text-[10.5px] text-neutral-400">
-            Filtro reactivo · respeta área, estado y búsqueda
-          </span>
-        </div>
+        {err && (
+          <div className="text-[12px] text-brand-fail bg-brand-failSoft border border-brand-fail/30 rounded-md px-3 py-2">
+            Error cargando OTs: {err}
+          </div>
+        )}
+
+        {!loading && !err && (
+          <>
+            <Bar
+              label={isAll ? 'POS con cierre histórico' : 'OT Cerradas'}
+              count={stats.closed}
+              pct={stats.pctClosed}
+              barClass="bg-brand-pass"
+              textClass="text-brand-pass"
+              dotClass="bg-brand-pass"
+            />
+            <Bar
+              label={isAll ? 'POS con OT abierta' : 'OT Abiertas'}
+              count={stats.open}
+              pct={stats.pctOpen}
+              barClass="bg-brand-warn"
+              textClass="text-amber-700"
+              dotClass="bg-brand-warn"
+            />
+
+            <div className="pt-3 border-t border-neutral-100 flex items-center justify-between text-[11.5px] text-neutral-500 flex-wrap gap-2">
+              <span>
+                Total {isAll ? 'POS' : 'OTs en el período'}:{' '}
+                <strong className="text-neutral-800">{stats.total}</strong>
+              </span>
+              {stats.total === 0 && (
+                <span className="italic text-neutral-400">Sin movimientos</span>
+              )}
+              <span className="text-[10.5px] text-neutral-400">
+                {isAll
+                  ? 'Modo agregado — todas las POS'
+                  : 'Cerrada = NOTI + fecha_cierre en el mes'}
+              </span>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
 }
 
-// ─── Sub-componente: barra horizontal ───────────────────────────────────
 function Bar({ label, count, pct, barClass, textClass, dotClass }) {
   return (
     <div className="flex items-center gap-3">
-      <div className="flex items-center gap-2 w-32 shrink-0">
+      <div className="flex items-center gap-2 w-44 shrink-0">
         <span className={`w-2 h-2 rounded-full ${dotClass}`}></span>
         <span className="text-[12px] font-bold text-neutral-700">{label}</span>
       </div>
