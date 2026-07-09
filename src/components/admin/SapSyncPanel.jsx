@@ -168,11 +168,76 @@ export default function SapSyncPanel() {
       await new Promise((r) => setTimeout(r, 0));
     }
 
+    // ── 3.5) DIFF-AND-SYNC (Sprint 38) — borrar OTs pegadas del rango ──
+    // Objetivo: eliminar automáticamente OTs que quedaron "pegadas" en la BD
+    // porque SAP dejó de incluirlas en el CSV. Regla conservadora:
+    //   • Solo POS presentes en el CSV
+    //   • Solo OTs con planned_date DENTRO del rango del CSV (protege histórico)
+    //   • De ese subset: borrar las que no vienen con wo_number en el CSV
+    let deleted_orphans = 0;
+    let diff_range      = null;
+
+    try {
+      const plannedDates = deduped
+        .map((r) => r.planned_date)
+        .filter(Boolean)
+        .sort();
+
+      if (plannedDates.length > 0) {
+        const csvMinDate = plannedDates[0];
+        const csvMaxDate = plannedDates[plannedDates.length - 1];
+        diff_range = { min: csvMinDate, max: csvMaxDate };
+
+        const posInCsv   = [...new Set(deduped.map((r) => r.pos_mtto))];
+        const woInCsvSet = new Set(deduped.map((r) => r.wo_number));
+
+        const POS_CHUNK    = 300;
+        const orphanWoList = [];
+
+        for (let i = 0; i < posInCsv.length; i += POS_CHUNK) {
+          const posChunk = posInCsv.slice(i, i + POS_CHUNK);
+          const { data: bdOts, error: qErr } = await supabase
+            .from('sap_work_orders')
+            .select('wo_number')
+            .in('pos_mtto', posChunk)
+            .gte('planned_date', csvMinDate)
+            .lte('planned_date', csvMaxDate);
+
+          if (qErr) {
+            console.warn('[SapSyncPanel] diff query error:', qErr.message);
+            break;
+          }
+          for (const o of bdOts || []) {
+            if (!woInCsvSet.has(o.wo_number)) orphanWoList.push(o.wo_number);
+          }
+        }
+
+        const DEL_CHUNK = 200;
+        for (let i = 0; i < orphanWoList.length; i += DEL_CHUNK) {
+          const delChunk = orphanWoList.slice(i, i + DEL_CHUNK);
+          const { error: dErr } = await supabase
+            .from('sap_work_orders')
+            .delete()
+            .in('wo_number', delChunk);
+          if (dErr) {
+            console.warn('[SapSyncPanel] diff delete error:', dErr.message);
+            break;
+          }
+          deleted_orphans += delChunk.length;
+        }
+      }
+    } catch (e) {
+      console.warn('[SapSyncPanel] diff-and-sync excepción:', e.message);
+      // No abortamos — el upsert ya se completó
+    }
+
     // ── 4) Éxito ────────────────────────────────────────────────────────
     setResult({
       total:   rows.length,
       valid:   valid.length,
       upserted,
+      deleted_orphans,           // Sprint 38
+      diff_range,                // Sprint 38
       skipped: skipped_reasons.length,
       skipped_reasons: skipped_reasons.slice(0, 20),
       batches: totalChunks,
@@ -341,17 +406,39 @@ export default function SapSyncPanel() {
               <div>
                 <div className="text-[14px] font-bold text-brand-pass">Sincronización completada</div>
                 <div className="text-[11.5px] text-neutral-600">
-                  {result.upserted} órdenes sincronizadas en {result.batches} chunk{result.batches === 1 ? '' : 's'}.
+                  {result.upserted} órdenes sincronizadas en {result.batches} chunk{result.batches === 1 ? '' : 's'}
+                  {result.deleted_orphans > 0 && (
+                    <>
+                      {' · '}
+                      <strong className="text-brand-fail">{result.deleted_orphans}</strong>
+                      {' '}OTs pegadas eliminadas
+                    </>
+                  )}
+                  .
                 </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-3">
               <MetricMini label="Líneas leídas"   value={result.total} />
               <MetricMini label="Filas válidas"   value={result.valid}    tone="env" />
               <MetricMini label="Upserted"        value={result.upserted} tone="pass" />
+              <MetricMini label="OTs huérfanas borradas" value={result.deleted_orphans ?? 0} tone={result.deleted_orphans > 0 ? 'fail' : 'neutral'} />
               <MetricMini label="Descartadas"     value={result.skipped}  tone={result.skipped > 0 ? 'warn' : 'neutral'} />
             </div>
+
+            {result.diff_range && (
+              <div className="mb-3 text-[10.5px] text-neutral-500 bg-white border border-neutral-200 rounded-md px-3 py-1.5">
+                <strong>Rango diff-and-sync:</strong>{' '}
+                <span className="font-mono">{result.diff_range.min}</span>
+                {' → '}
+                <span className="font-mono">{result.diff_range.max}</span>
+                {' '}
+                <span className="text-neutral-400">
+                  · Solo se borraron OTs fantasma dentro de este rango cuya POS venía en el CSV.
+                </span>
+              </div>
+            )}
 
             {result.skipped > 0 && result.skipped_reasons?.length > 0 && (
               <div className="mt-3 border-t border-brand-pass/20 pt-3">
@@ -390,6 +477,7 @@ function MetricMini({ label, value, tone = 'neutral' }) {
     env:     'bg-brand-envSoft border-brand-env/20 text-brand-env',
     pass:    'bg-brand-passSoft border-brand-pass/20 text-brand-pass',
     warn:    'bg-brand-warnSoft border-brand-warn/20 text-amber-700',
+    fail:    'bg-brand-failSoft border-brand-fail/20 text-brand-fail',
   };
   return (
     <div className={`rounded-md border px-3 py-2 ${toneMap[tone] || toneMap.neutral}`}>

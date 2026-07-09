@@ -1,28 +1,33 @@
 // lib/sapSync.js
 // =========================================================================
-// SAP CSV PARSER + VALIDADOR — Sprint 27 (fix dates + Fe.planif + Fecha cierre)
+// SAP CSV PARSER + VALIDADOR — Sprint 39 (fix serial Excel + IP24)
 // -------------------------------------------------------------------------
-// CAMBIOS vs. Sprint 25:
-//   1) cleanIsoDate ahora acepta TRES formatos:
+// CAMBIOS vs. Sprint 27:
+//   1) cleanIsoDate ahora acepta CUATRO formatos:
 //        • YYYY-MM-DD          (ISO estricto — backward compat)
-//        • MM/DD/YY o MM/DD/YYYY (US — formato observado en producción)
+//        • MM/DD/YY o MM/DD/YYYY (US — SAP en producción)
 //        • DD/MM/YY o DD/MM/YYYY (EU — heurística de disambiguación)
+//        • N serial Excel      (Sprint 39, IP24 cruzado exporta así)
+//                              Ej: 46267 → 2026-09-02
+//                                  45917 → 2025-09-17
 //      Auto-detecta cuál es M y cuál es D usando límites de mes:
 //        • Si primer número > 12 → es día → D/M
 //        • Si segundo número > 12 → es día → M/D
 //        • Si ambos ≤ 12 (ambiguo) → asume M/D (default SAP US)
 //      Año de 2 dígitos se expande a 20XX.
+//      Números enteros entre 20000 y 60000 se interpretan como serial Excel.
 //
-//   2) Mapeo COLUMN_MAP extendido con dos campos del cruce IP24:
+//   2) Mapeo COLUMN_MAP con dos campos del cruce IP24:
 //        • Fe.planif.      → fe_planif      (fecha planificada IP24)
 //        • Fecha de cierre → fecha_cierre   (fecha real de cierre IP24)
 //      Son OPCIONALES (no rompen si el CSV viene sin ellas — backward
 //      compat con plantas que aún no hicieron el cruce IP24).
 //
 // IMPACTO:
-//   Tras este fix + re-sync del CSV, las OTs cerradas con CTEC NOTI van
-//   a poblar correctamente fecha_cierre, y la regla del faro (Sprint 26b)
-//   las reconocerá como la última cierre real en ÚLTIMA(SAP).
+//   Tras este fix + re-sync del CSV cruzado, las OTs cerradas con CTEC NOTI
+//   van a poblar correctamente fecha_cierre (incluso desde serial Excel),
+//   y la regla del faro (Sprint 26b) las reconocerá como la última cierre
+//   real en ÚLTIMA(SAP).
 // =========================================================================
 
 export const CHUNK_SIZE = 500;
@@ -101,12 +106,22 @@ export function parseCsv(text) {
 // ─── Validadores de tipo ────────────────────────────────────────────────
 export function cleanText(v) {
   if (v == null) return null;
-  // Limpia espacios + caracteres invisibles que SAP a veces inyecta
-  const s = String(v).replace(/[ ​﻿]/g, '').trim();
+  // Sprint 39: FIX — solo eliminar caracteres INVISIBLES que SAP inyecta
+  // (zero-width space U+200B, ZWNJ U+200C, ZWJ U+200D, BOM U+FEFF).
+  // NO eliminar el espacio normal: el status SAP viene como "CTEC NOTI
+  // DMNV KKMP" y necesitamos preservar los espacios para extraer el
+  // primer token correctamente en el frontend.
+  const s = String(v).replace(/[\u200B\u200C\u200D\uFEFF]/g, '').trim();
   return s === '' ? null : s;
 }
 
-// Sprint 27: parser robusto que acepta YYYY-MM-DD, M/D/YY[YY], D/M/YY[YY]
+// Sprint 39: parser robusto que acepta 4 formatos de entrada:
+//   1) YYYY-MM-DD              (ISO estricto)
+//   2) M/D/YY[YY] o D/M/YY[YY] (SAP US o EU con slashes)
+//   3) N serial Excel          (número de días desde 1900-01-01)
+//                              Ej: 46267 = 2026-09-02
+//                              Aparece en CSVs cruzados con IP24
+//   4) cualquier otro → null (no fallar, solo no parsear)
 export function cleanIsoDate(v) {
   const s = cleanText(v);
   if (!s) return null;
@@ -148,6 +163,26 @@ export function cleanIsoDate(v) {
     const iso = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const d = new Date(iso + 'T00:00:00Z');
     return isNaN(d.getTime()) ? null : iso;
+  }
+
+  // ── Formato 3: Excel serial number (Sprint 39) ────────────────────────
+  // Excel guarda fechas como número de días desde 1900-01-01.
+  // Conversión a Unix ms: (serial - 25569) * 86400000
+  //   • 25569 = días entre 1900-01-01 y 1970-01-01
+  //   • 86400000 = milisegundos en un día
+  // Rango razonable: 20000 (=1954) a 60000 (=2064) para descartar números
+  // que no son fechas (ej. wo_number, códigos de área).
+  if (/^\d+$/.test(s)) {
+    const serial = parseInt(s, 10);
+    if (serial >= 20000 && serial <= 60000) {
+      const unixMs = (serial - 25569) * 86400000;
+      const d = new Date(unixMs);
+      if (isNaN(d.getTime())) return null;
+      const y  = d.getUTCFullYear();
+      const mo = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const dd = String(d.getUTCDate()).padStart(2, '0');
+      return `${y}-${mo}-${dd}`;
+    }
   }
 
   // Cualquier otro formato → null (no fallar, simplemente no parsear)

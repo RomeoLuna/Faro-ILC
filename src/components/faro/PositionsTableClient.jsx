@@ -62,7 +62,10 @@ function formatDate(iso) {
 
 function primaryStatusToken(status) {
   if (!status) return null;
-  return status.split(/\s+/)[0].replace(/\.$/, '');
+  // Sprint 39: robusto a syncs que perdieron los espacios (bug de cleanText).
+  // Los status de SAP siempre empiezan con un token de 4 caracteres
+  // (CTEC, NOTI, ABIE, LIB., CERR, ZONA, etc.). Cortamos a 4 chars siempre.
+  return status.trim().slice(0, 4).replace(/\.$/, '');
 }
 
 // ─── Validación de frecuencia técnica (Sprint 18) ───────────────────────
