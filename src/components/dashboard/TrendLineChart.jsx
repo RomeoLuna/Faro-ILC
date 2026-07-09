@@ -78,14 +78,15 @@ export default function TrendLineChart({ positions, period }) {
         .from('sap_work_orders')
         .select('wo_number, pos_mtto, status, planned_date, fe_planif, fecha_cierre');
 
+      // Sprint 34f: SOLO fe_planif en el mes (mismo criterio que Compliance).
+      // OTs sin fe_planif quedan fuera hasta que IP24 sincronice.
       const [start, end] = periodRange(period);
       if (start && end) {
         const s = isoDay(start);
         const e = isoDay(end);
-        query = query.or(
-          `and(planned_date.gte.${s},planned_date.lt.${e}),` +
-          `and(fe_planif.gte.${s},fe_planif.lt.${e})`
-        );
+        query = query
+          .gte('fe_planif', s)
+          .lt('fe_planif', e);
       }
 
       if (posKeys.length > 0 && posKeys.length <= 1000) {
@@ -136,15 +137,26 @@ export default function TrendLineChart({ positions, period }) {
     }
 
     const [start, end] = periodRange(period);
+
+    // Sprint 34j — SOLO 1 OT por POS (la más reciente = latest wo_number).
+    // Misma regla que Compliance.
+    const latestPerPos = new Map();
+    for (const ot of otRows) {
+      if (!ot.pos_mtto) continue;
+      const cur = latestPerPos.get(ot.pos_mtto);
+      if (!cur || Number(ot.wo_number) > Number(cur.wo_number)) {
+        latestPerPos.set(ot.pos_mtto, ot);
+      }
+    }
+
     let vencidas = 0;
     let vigentes = 0;
-
-    for (const ot of otRows) {
-      const cerradaEnPeriodo =
+    for (const ot of latestPerPos.values()) {
+      const isPositive =
         isNotificada(ot.status) &&
         dateInRange(ot.fecha_cierre, start, end);
-      if (cerradaEnPeriodo) vigentes++;
-      else                  vencidas++;
+      if (isPositive) vigentes++;
+      else            vencidas++;
     }
 
     const total    = vencidas + vigentes;
@@ -216,13 +228,13 @@ export default function TrendLineChart({ positions, period }) {
 
             <div className="mt-4 flex items-center justify-between gap-4 text-[12px]">
               <LegendCell
-                label={isAll ? 'POS vencidas' : 'Vencidas (no cerradas en el mes)'}
+                label="POS incumplidas (no cerradas en el mes)"
                 count={data.vencidas}
                 dot="bg-brand-fail"
                 text="text-brand-fail"
               />
               <LegendCell
-                label={isAll ? 'POS sanas' : 'Sanas (cerradas en el mes)'}
+                label="POS cumplidas (cerradas en el mes)"
                 count={data.vigentes}
                 dot="bg-brand-pass"
                 text="text-brand-pass"
@@ -231,7 +243,7 @@ export default function TrendLineChart({ positions, period }) {
 
             <div className="mt-3 pt-3 border-t border-neutral-100 text-[11px] text-neutral-500 flex items-center justify-between">
               <span>
-                Total {isAll ? 'POS' : 'OTs en el período'}:{' '}
+                Total POS con OT en el período:{' '}
                 <strong className="text-neutral-800">{data.total}</strong>
               </span>
               <span className="text-[10.5px] text-neutral-400">Reactivo al selector de Cumplimiento</span>

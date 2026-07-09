@@ -1,37 +1,44 @@
 'use client';
 // components/layout/Sidebar.jsx
 // =========================================================================
-// SIDEBAR PERSISTENTE (Client Component) — NO AUTH
+// SIDEBAR PERSISTENTE (Client Component) — Sprint 36 (3 secciones)
 // -------------------------------------------------------------------------
 // Estructura:
 //   1. Marca AB
-//   2. <SectionSwitcher /> — tarjetas Envasado / Ingeniería
+//   2. <SectionSwitcher /> — tarjetas Envasado / Ingeniería / Calidad
 //   3. Menú dinámico según la sección activa (detectada por la ruta)
 //   4. Bloque "Compartido" (Certificados, Catálogo de Patrones)
-//   5. Bloque "Administración" — Visible para todos (acciones protegidas por PIN)
+//   5. Bloque "Administración" — CONDICIONAL: sólo visible para role=admin
 //
 // La sección activa se infiere del pathname:
-//   /envasado/* → menú Envasado
+//   /envasado/*   → menú Envasado
 //   /ingenieria/* → menú Ingeniería
-//   /certificados, /catalogos, /admin → no fuerza sección (mantiene la última)
+//   /calidad/*    → menú Calidad
+//   /certificados, /catalogos, /admin → mantiene la última (default envasado)
 // =========================================================================
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import SectionSwitcher from './SectionSwitcher';
+import { useUser } from '@/components/auth/UserProvider';
 
 // Mapas de navegación por sección. Centralizados aquí para que agregar
 // nuevas páginas sea un solo edit.
 const NAV = {
   envasado: [
     { href: '/envasado',            label: 'Faro Envasado',     badge: { text: '86', tone: 'env' } },
-    { href: '/envasado/backlog',    label: 'Backlog y Alertas', badge: { text: '4',  tone: 'fail' } },
-    { href: '/envasado/cronograma', label: 'Cronograma' },
+    { href: '/envasado/backlog',    label: 'Backlog Envasado', badge: { text: '4',  tone: 'fail' } },
+    { href: '/envasado/cronograma', label: 'Cronograma', badge: { text: 'NEW', tone: 'amber' } },
   ],
   ingenieria: [
     { href: '/ingenieria',            label: 'Faro Ingeniería',      badge: { text: '132', tone: 'eng' } },
     { href: '/ingenieria/backlog',    label: 'Backlog Ingeniería',   badge: { text: '7',   tone: 'warn' } },
     { href: '/ingenieria/tendencias', label: 'Tendencias por Sensor' },
+  ],
+  calidad: [
+    { href: '/calidad',            label: 'Faro Calidad',        badge: { text: '271', tone: 'qual' } },
+    { href: '/calidad/backlog',    label: 'Backlog Calidad',     badge: { text: '',    tone: 'warn' } },
+    { href: '/calidad/cronograma', label: 'Cronograma Calidad',  badge: { text: 'NEW', tone: 'amber' } },
   ],
 };
 
@@ -42,10 +49,12 @@ const SHARED = [
 
 function badgeClass(tone) {
   const map = {
-    env:  'bg-brand-env/20 text-brand-env',
-    eng:  'bg-brand-eng/20 text-brand-eng',
-    fail: 'bg-brand-fail text-white',
-    warn: 'bg-brand-warn text-white',
+    env:   'bg-brand-env/20 text-brand-env',
+    eng:   'bg-brand-eng/20 text-brand-eng',
+    qual:  'bg-brand-qual/20 text-brand-qual',
+    fail:  'bg-brand-fail text-white',
+    warn:  'bg-brand-warn text-white',
+    amber: 'bg-brand-amber text-black font-bold',
   };
   return `ml-auto text-[10px] px-1.5 py-0.5 rounded ${map[tone] || map.env}`;
 }
@@ -106,11 +115,15 @@ function AdminNavLink({ href, label }) {
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const section = pathname.startsWith('/ingenieria') ? 'ingenieria' : 'envasado';
+  // Sprint 36: 3 secciones — detección por prefijo de ruta.
+  let section = 'envasado';
+  if (pathname.startsWith('/ingenieria')) section = 'ingenieria';
+  else if (pathname.startsWith('/calidad')) section = 'calidad';
   const links = NAV[section];
 
-  // En este nuevo modelo sin auth, todos tienen acceso a ver la pestaña de administración.
-  const isAdmin = true;
+  // Lectura del profile para gating del bloque Admin
+  const ctx = useUser();
+  const isAdmin = ctx?.profile?.role === 'admin';
 
   return (
     <aside className="bg-brand-ink text-white flex flex-col sticky top-0 h-screen">
@@ -131,7 +144,11 @@ export default function Sidebar() {
       {/* Menú dinámico */}
       <nav className="flex-1 px-3 py-3 overflow-y-auto hide-scrollbar">
         <div className="text-[10px] uppercase tracking-[0.12em] text-neutral-500 px-3 pt-2 pb-1">
-          {section === 'envasado' ? 'Envasado · Operación' : 'Ingeniería · Operación'}
+          {section === 'envasado'
+            ? 'Envasado · Operación'
+            : section === 'ingenieria'
+              ? 'Ingeniería · Operación'
+              : 'Calidad · Operación'}
         </div>
 
         <div className="space-y-0.5">
@@ -150,7 +167,7 @@ export default function Sidebar() {
           ))}
         </div>
 
-        {/* Bloque Administración — Visible para todos */}
+        {/* Bloque Administración — sólo visible para role=admin */}
         {isAdmin && (
           <div className="mt-4 pt-3 border-t border-brand-line/60 space-y-0.5">
             <div className="text-[10px] uppercase tracking-[0.12em] text-neutral-500 px-3 pt-2 pb-1">
@@ -164,7 +181,7 @@ export default function Sidebar() {
       {/* Footer */}
       <div className="px-5 py-3 border-t border-brand-line/60 text-[11px] text-neutral-400">
         <span className="inline-block w-1.5 h-1.5 rounded-full bg-brand-pass mr-1.5"></span>
-        Backend en ejecución · UI v2
+        Backend pausado · UI v2
       </div>
     </aside>
   );

@@ -6,7 +6,7 @@
 //   - El color del borde superior (border-t-4)
 //   - El color del valor principal (text-3xl)
 //
-// Tones disponibles: amber | warn | fail | env | eng
+// Tones disponibles: amber | warn | fail | env | eng | qual
 // =========================================================================
 
 const TONE_TOP = {
@@ -15,6 +15,7 @@ const TONE_TOP = {
   fail:  'border-t-brand-fail',
   env:   'border-t-brand-env',
   eng:   'border-t-brand-eng',
+  qual:  'border-t-brand-qual',
 };
 
 const TONE_VALUE = {
@@ -23,6 +24,7 @@ const TONE_VALUE = {
   fail:  'text-brand-fail',
   env:   'text-brand-env',
   eng:   'text-brand-eng',
+  qual:  'text-brand-qual',
 };
 
 export default function KpiCard({ label, value, foot, tone = 'amber' }) {

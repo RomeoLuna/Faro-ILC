@@ -29,7 +29,8 @@ import { getCurrentUserWithProfile, canSignCalibration } from '@/lib/auth';
  * @param {string} [payload.instrument_tag]
  * @param {string} [payload.serial_number]
  * @param {string} [payload.pattern_used]
- * @param {string} [payload.pattern_cert_id]       Sprint 29: N° certificado del patrón
+ * @param {string} [payload.pattern_cert_id]        Sprint 29: N° certificado del patrón
+ * @param {string} [payload.pattern_certificate_url] Sprint 35: URL al PDF del cert del patrón
  * @param {number} payload.range_min
  * @param {number} payload.range_max
  * @param {string} [payload.unit]
@@ -124,14 +125,19 @@ export async function saveCalibrationEvent(payload) {
     return { ok: false, error: error.message };
   }
 
-  // ── 4) Sprint 29: UPDATE post-INSERT para campos que el RPC no acepta ──
-  // El RPC fue diseñado en Sprint 4 sin parámetros para technician_name ni
-  // pattern_cert_id (esas columnas no existían). Hacemos un UPDATE quirúrgico
+  // ── 4) Sprint 29/35: UPDATE post-INSERT para campos que el RPC no acepta ──
+  // El RPC fue diseñado en Sprint 4 sin parámetros para technician_name,
+  // pattern_cert_id ni pattern_certificate_url. Hacemos un UPDATE quirúrgico
   // para llenarlos. Si falla, no abortamos — el evento ya está persistido.
-  if (payload.technician_name || payload.pattern_cert_id) {
+  if (
+    payload.technician_name ||
+    payload.pattern_cert_id ||
+    payload.pattern_certificate_url
+  ) {
     const patch = {};
-    if (payload.technician_name) patch.technician_name = payload.technician_name;
-    if (payload.pattern_cert_id) patch.pattern_cert_id = payload.pattern_cert_id;
+    if (payload.technician_name)         patch.technician_name = payload.technician_name;
+    if (payload.pattern_cert_id)         patch.pattern_cert_id = payload.pattern_cert_id;
+    if (payload.pattern_certificate_url) patch.pattern_certificate_url = payload.pattern_certificate_url;
 
     const { error: patchErr } = await supabase
       .from('calibration_events')
@@ -203,7 +209,7 @@ export async function getCalibrationHistory(positionId) {
     .select(`
       id, source,
       sap_wo, instrument_tag, serial_number,
-      pattern_used, pattern_cert_id,
+      pattern_used, pattern_cert_id, pattern_certificate_url,
       range_min, range_max, unit, tolerance_pct, sensor_type,
       result, performed_at, performed_by,
       technician_name,

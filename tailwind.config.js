@@ -1,15 +1,23 @@
 /**
  * tailwind.config.js
  * Tema industrial de "Sistema de Calibraciones v2".
- * Las paletas brand.* replican exactamente las del Mockup_v2_Calibraciones.html
- * para que los componentes migrados conserven fidelidad visual 1:1.
+ * Sprint 36: agregada paleta 'qual' para la sección Calidad.
  *
  * @type {import('tailwindcss').Config}
  */
 module.exports = {
   content: [
-    './src/app/**/*.{js,jsx,ts,tsx}',
-    './src/components/**/*.{js,jsx,ts,tsx}',
+    './app/**/*.{js,jsx,ts,tsx}',
+    './components/**/*.{js,jsx,ts,tsx}',
+    './src/**/*.{js,jsx,ts,tsx}',
+  ],
+  safelist: [
+    // Sprint 36: fuerza a Tailwind a generar las clases dinámicas de las 3
+    // secciones aunque el JIT no las detecte por interpolación.
+    'bg-brand-env',   'border-brand-env',   'ring-brand-env/40',   'hover:border-brand-env',   'text-brand-env',   'border-t-brand-env',
+    'bg-brand-eng',   'border-brand-eng',   'ring-brand-eng/40',   'hover:border-brand-eng',   'text-brand-eng',   'border-t-brand-eng',
+    'bg-brand-qual',  'border-brand-qual',  'ring-brand-qual/40',  'hover:border-brand-qual',  'text-brand-qual',  'border-t-brand-qual',
+    'bg-brand-qual/20',
   ],
   theme: {
     extend: {
@@ -26,11 +34,13 @@ module.exports = {
           amberHover: '#D49300',
           amberSoft:  '#FFF5DD',
 
-          // Sección Envasado (azul) e Ingeniería (teal)
+          // Sección Envasado (azul), Ingeniería (teal), Calidad (púrpura)
           env:        '#2563EB',
           envSoft:    '#DBEAFE',
           eng:        '#0D9488',
           engSoft:    '#CCFBF1',
+          qual:       '#7C3AED',
+          qualSoft:   '#EDE9FE',
 
           // Semánticos de estado
           pass:       '#059669',

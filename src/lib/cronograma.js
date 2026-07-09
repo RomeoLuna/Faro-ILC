@@ -2,18 +2,7 @@
 // =========================================================================
 // CRONOGRAMA — Helpers de fechas, categorización y KPIs
 // -------------------------------------------------------------------------
-// Funciones puras (sin React, sin Supabase) compartidas por:
-//   • CronogramaTable    → muestra el badge por fila
-//   • CronogramaDashboard → calcula KPIs + clasifica las 3 listas
-//
-// REGLAS DEL SEMÁFORO (acordadas con planta):
-//   🟩 COMPLETED   scheduled_date <= fin del mes  AND  fecha_cierre IS NOT NULL
-//   🟨 IN_PROGRESS scheduled_date dentro del mes  AND  fecha_cierre IS NULL
-//                  AND scheduled_date >= today    (aún hay tiempo)
-//   🟥 OVERDUE     scheduled_date <= fin del mes  AND  fecha_cierre IS NULL
-//                  AND (scheduled_date < today  OR  month already closed)
-//   ⚪ NOT_PLANNED scheduled_date IS NULL
-//   ⏩ FUTURE      scheduled_date > fin del mes   (no cuenta en este mes)
+// Sprint 36: se añade tab 'calidad' que filtra por section='calidad'.
 // =========================================================================
 
 // ─── Parsing de fechas locales (evita drift UTC) ────────────────────────
@@ -42,7 +31,7 @@ export function formatDate(iso) {
 export function monthBounds(today = new Date()) {
   const t = stripTime(today);
   const start = new Date(t.getFullYear(), t.getMonth(), 1);
-  const end   = new Date(t.getFullYear(), t.getMonth() + 1, 0); // último día del mes
+  const end   = new Date(t.getFullYear(), t.getMonth() + 1, 0);
   return { start, end, today: t };
 }
 
@@ -50,39 +39,37 @@ function stripTime(d) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
+export function isSapNotificada(status) {
+  if (!status) return false;
+  return status.toString().toUpperCase().includes('NOTI');
+}
+
 // ─── Categorización por OT ──────────────────────────────────────────────
-// Devuelve: 'COMPLETED' | 'IN_PROGRESS' | 'OVERDUE' | 'NOT_PLANNED' | 'FUTURE'
 export function categorizeOT(ot, today = new Date()) {
   const scheduled = parseLocalDate(ot.scheduled_date);
   if (!scheduled) return 'NOT_PLANNED';
 
   const { start, end, today: t } = monthBounds(today);
 
-  // Programada para un mes futuro → no entra en la evaluación del mes actual
   if (scheduled > end) return 'FUTURE';
 
-  // Tiene fecha de notificación → cumplida (vino o no a tiempo, eso es otra métrica)
   const closed = parseLocalDate(ot.fecha_cierre);
   if (closed) return 'COMPLETED';
 
-  // No tiene cierre. ¿Estamos dentro del mes Y la fecha programada sigue por venir?
   if (scheduled >= t && scheduled <= end) return 'IN_PROGRESS';
 
-  // No cierre + scheduled_date pasó o es de meses anteriores
   return 'OVERDUE';
 }
 
 // ─── KPIs del mes ───────────────────────────────────────────────────────
-// Considera "del mes" las OTs cuyo scheduled_date está dentro del mes corriente
-// O arrastradas (scheduled_date en meses anteriores sin cierre).
 export function computeKpis(rows, today = new Date()) {
   const { start, end } = monthBounds(today);
 
-  let planificadas = 0;   // total a ejecutar este mes (current + arrastradas)
-  let ejecutadas   = 0;   // de planificadas, las que tienen fecha_cierre
-  let enProgreso   = 0;   // 🟨
-  let vencidas     = 0;   // 🟥
-  let cumplidas    = 0;   // 🟩 (sinónimo de ejecutadas, alias para claridad)
+  let planificadas = 0;
+  let ejecutadas   = 0;
+  let enProgreso   = 0;
+  let vencidas     = 0;
+  let cumplidas    = 0;
 
   for (const row of rows) {
     const status = categorizeOT(row, today);
@@ -119,12 +106,14 @@ export function partitionForDashboard(rows, today = new Date()) {
 }
 
 // ─── Filtros por tab ────────────────────────────────────────────────────
+// Sprint 36: se añade tab 'calidad' que filtra por section='calidad'.
 export const TABS = [
   { key: 'global',         label: 'Global',         match: () => true },
   { key: 'envasado',       label: 'Envasado',       match: (r) => r.section === 'envasado' },
   { key: 'medio_ambiente', label: 'Medio Ambiente', match: (r) => r.area === 'MEDIO AMBIENTE' },
   { key: 'suministros',    label: 'Suministros',    match: (r) => r.area === 'SUMINISTROS' },
   { key: 'elaboracion',    label: 'Elaboración',    match: (r) => r.area === 'ELABORACION' },
+  { key: 'calidad',        label: 'Calidad',        match: (r) => r.section === 'calidad' },
 ];
 
 export function filterByTab(rows, tabKey) {

@@ -80,15 +80,18 @@ export default function ComplianceChart({ positions, period, setPeriod }) {
         .from('sap_work_orders')
         .select('wo_number, pos_mtto, status, planned_date, fe_planif, fecha_cierre');
 
-      // Filtro del universo: planned_date O fe_planif EN el mes
+      // Filtro del universo (Sprint 34f): SOLO fe_planif en el mes.
+      // fe_planif (Fe.planif., IP24) es la PRÓXIMA (SAP) que el usuario ve
+      // en el faro — refleja la planificación ACTUAL de SAP, no la histórica.
+      // OTs sin fe_planif (IP24 aún no cruzó) quedan fuera del análisis
+      // hasta que se sincronicen.
       const [start, end] = periodRange(period);
       if (start && end) {
         const s = isoDay(start);
         const e = isoDay(end);
-        query = query.or(
-          `and(planned_date.gte.${s},planned_date.lt.${e}),` +
-          `and(fe_planif.gte.${s},fe_planif.lt.${e})`
-        );
+        query = query
+          .gte('fe_planif', s)
+          .lt('fe_planif', e);
       }
 
       if (posKeys.length > 0 && posKeys.length <= 1000) {
@@ -133,16 +136,30 @@ export default function ComplianceChart({ positions, period, setPeriod }) {
     }
 
     const [start, end] = periodRange(period);
+
+    // Sprint 34j — SOLO 1 OT por POS (la actual = latest wo_number).
+    //   Para cada POS, escogemos la OT con el wo_number más alto (más
+    //   reciente en SAP). Ignoramos las demás OTs del mismo POS aunque
+    //   también tengan fe_planif en el mes. Esa "OT actual" es la que
+    //   define si el POS cuenta positivo o negativo.
+    const latestPerPos = new Map(); // pos_mtto -> OT
+    for (const ot of otRows) {
+      if (!ot.pos_mtto) continue;
+      const cur = latestPerPos.get(ot.pos_mtto);
+      if (!cur || Number(ot.wo_number) > Number(cur.wo_number)) {
+        latestPerPos.set(ot.pos_mtto, ot);
+      }
+    }
+
     let closed = 0;
     let open   = 0;
-
-    for (const ot of otRows) {
-      // Cerrada positiva = NOTI en status AND fecha_cierre dentro del mes
-      const cerradaEnPeriodo =
+    for (const ot of latestPerPos.values()) {
+      // Positivo: NOTI en status Y fecha_cierre en el mes.
+      const isPositive =
         isNotificada(ot.status) &&
         dateInRange(ot.fecha_cierre, start, end);
-      if (cerradaEnPeriodo) closed++;
-      else                  open++;
+      if (isPositive) closed++;
+      else            open++;
     }
 
     const total      = closed + open;
@@ -206,7 +223,7 @@ export default function ComplianceChart({ positions, period, setPeriod }) {
         {!loading && !err && (
           <>
             <Bar
-              label={isAll ? 'POS con cierre histórico' : 'OT Cerradas'}
+              label={isAll ? 'POS con cierre histórico' : 'POS cumplidas'}
               count={stats.closed}
               pct={stats.pctClosed}
               barClass="bg-brand-pass"
@@ -214,7 +231,7 @@ export default function ComplianceChart({ positions, period, setPeriod }) {
               dotClass="bg-brand-pass"
             />
             <Bar
-              label={isAll ? 'POS con OT abierta' : 'OT Abiertas'}
+              label={isAll ? 'POS con OT abierta' : 'POS incumplidas'}
               count={stats.open}
               pct={stats.pctOpen}
               barClass="bg-brand-warn"
@@ -224,7 +241,7 @@ export default function ComplianceChart({ positions, period, setPeriod }) {
 
             <div className="pt-3 border-t border-neutral-100 flex items-center justify-between text-[11.5px] text-neutral-500 flex-wrap gap-2">
               <span>
-                Total {isAll ? 'POS' : 'OTs en el período'}:{' '}
+                Total POS con OT en el período:{' '}
                 <strong className="text-neutral-800">{stats.total}</strong>
               </span>
               {stats.total === 0 && (
@@ -233,7 +250,7 @@ export default function ComplianceChart({ positions, period, setPeriod }) {
               <span className="text-[10.5px] text-neutral-400">
                 {isAll
                   ? 'Modo agregado — todas las POS'
-                  : 'Cerrada = NOTI + fecha_cierre en el mes'}
+                  : 'Positiva = NOTI + fecha_cierre en el mes'}
               </span>
             </div>
           </>

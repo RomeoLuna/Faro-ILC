@@ -1,6 +1,6 @@
 // components/faro/BacklogPanel.jsx
 // =========================================================================
-// BACKLOG PANEL — Server Component (Sprint 15)
+// BACKLOG PANEL — Server Component (Sprint 36 — soporta 3 secciones)
 // -------------------------------------------------------------------------
 // Panel gerencial de crisis. Fetch directo a maintenance_positions_view
 // con filtro por status IN ('VENCIDO','PROXIMO_7') Y por section.
@@ -18,8 +18,9 @@ import { createSupabaseServerClient } from '@/lib/supabase/server';
 import PositionsTableClient from './PositionsTableClient';
 
 const SECTION_META = {
-  envasado:   { label: 'Sección Envasado',   short: 'envasado' },
+  envasado:   { label: 'Sección Envasado',   short: 'envasado'   },
   ingenieria: { label: 'Sección Ingeniería', short: 'ingenieria' },
+  calidad:    { label: 'Sección Calidad',    short: 'calidad'    },
 };
 
 export default async function BacklogPanel({ section }) {

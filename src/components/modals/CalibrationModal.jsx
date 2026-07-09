@@ -23,38 +23,37 @@
 // =========================================================================
 
 import { useEffect, useState, useMemo } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useUser, useCanSignCalibration } from '@/components/auth/UserProvider';
+import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import CalibrationGrid from './CalibrationGrid';
 import { saveCalibrationEvent } from './actions';
 import { SUPERVISORS, getSupervisorById } from '@/lib/supervisors';
 import { SENSOR_TYPES, getUnitsForSensor } from '@/lib/sensors';
 import { generateAndDownloadCertificate, roleLabel } from '@/lib/pdf-download';
 
+// Sprint 35: patrón_selection_id puede ser
+//   • un uuid  → patrón del catálogo
+//   • 'otro'   → modo custom (nombre + URL escritos a mano)
+//   • ''       → sin seleccionar
 const INITIAL_FORM = {
-  sap_wo:          '',
-  instrument_tag:  '',
-  serial_number:   '',
-  pattern_used:    '',
-  pattern_cert_id: '',          // Sprint 29: Certificado de Patrón
-  sensor_type:     'Temperatura', // Sprint 29: tipo sensor con default
-  range_min:       '',
-  range_max:       '',
-  unit:            '',
-  observations:    '',
-  modo:            'mA',
-  supervisor_id:   '',
-  technician_name: '',          // Sprint 29: técnico editable
+  sap_wo:                  '',
+  instrument_tag:          '',
+  serial_number:           '',
+  patron_selection_id:     '',      // Sprint 35: id del catálogo o 'otro'
+  patron_custom_nombre:    '',      // Sprint 35: solo si es 'otro'
+  patron_custom_url:       '',      // Sprint 35: solo si es 'otro' (opcional)
+  pattern_cert_id:         '',      // Sprint 29: N° certificado del patrón
+  sensor_type:             'Temperatura',
+  range_min:               '',
+  range_max:               '',
+  unit:                    '',
+  observations:            '',
+  modo:                    'mA',
+  supervisor_id:           '',
+  technician_name:         '',
 };
-
-const PATRONES_DISPONIBLES = [
-  'Calibrador Multifunción Fluke 754',
-  'Calibrador Fluke 789 ProcessMeter',
-  'Pozo Seco Fluke 9100S',
-  'Patrón de pH Hanna HI98191',
-  'Calibrador de Presión Druck DPI 612',
-  'Microcalibrador Omega CL3515R',
-];
 
 export default function CalibrationModal() {
   const router = useRouter();
@@ -67,11 +66,21 @@ export default function CalibrationModal() {
   const [generatingPdf, setGeneratingPdf] = useState(false);
   const [error, setError]                 = useState(null);
 
+  // Sprint 35: patrones del catálogo — fetch al abrir el modal
+  const [patrones, setPatrones]           = useState([]);
+  const [patronesLoading, setPatronesLoading] = useState(false);
+
   const canSign     = useCanSignCalibration();
   const { profile } = useUser() || {};
 
   const supervisor   = getSupervisorById(form.supervisor_id);
   const unidadesValidas = useMemo(() => getUnitsForSensor(form.sensor_type), [form.sensor_type]);
+
+  // Patrón actualmente seleccionado del catálogo (null si es 'otro' o vacío)
+  const patronCatalogo = useMemo(() => {
+    if (!form.patron_selection_id || form.patron_selection_id === 'otro') return null;
+    return patrones.find((p) => p.id === form.patron_selection_id) || null;
+  }, [form.patron_selection_id, patrones]);
 
   useEffect(() => {
     function handler(e) {
@@ -80,7 +89,6 @@ export default function CalibrationModal() {
       setForm({
         ...INITIAL_FORM,
         sap_wo:       p.sap_open_wo || '',
-        pattern_used: p.default_pattern || '',
         sensor_type:  p.sensor_type || 'Temperatura',
         range_min:    p.range_min ?? '',
         range_max:    p.range_max ?? '',
@@ -93,6 +101,30 @@ export default function CalibrationModal() {
     window.addEventListener('open:calibration', handler);
     return () => window.removeEventListener('open:calibration', handler);
   }, []);
+
+  // Sprint 35: fetch de patrones cada vez que se abre el modal
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    setPatronesLoading(true);
+    (async () => {
+      const supabase = createSupabaseBrowserClient();
+      const { data, error: err } = await supabase
+        .from('patrones_catalogo')
+        .select('id, nombre, certificate_url')
+        .eq('active', true)
+        .order('nombre', { ascending: true });
+      if (cancelled) return;
+      if (err) {
+        console.warn('[CalibrationModal] error cargando patrones:', err.message);
+        setPatrones([]);
+      } else {
+        setPatrones(data || []);
+      }
+      setPatronesLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [open]);
 
   if (!open || !position) return null;
 
@@ -138,13 +170,29 @@ export default function CalibrationModal() {
       return;
     }
 
+    // ── Sprint 35: resolver patrón (catálogo vs "Otro") ───────────────────
+    let patternUsedFinal = null;
+    let patternCertUrlFinal = null;
+    if (form.patron_selection_id === 'otro') {
+      patternUsedFinal = form.patron_custom_nombre?.trim() || null;
+      patternCertUrlFinal = form.patron_custom_url?.trim() || null;
+      if (!patternUsedFinal) {
+        setError('Escribe el nombre del patrón usado.');
+        return;
+      }
+    } else if (patronCatalogo) {
+      patternUsedFinal = patronCatalogo.nombre;
+      patternCertUrlFinal = patronCatalogo.certificate_url;
+    }
+
     // ── Payload para el server action ─────────────────────────────────────
     const payload = {
       position_id:     position.id,
       sap_wo:          form.sap_wo || null,
       instrument_tag:  form.instrument_tag || null,
       serial_number:   form.serial_number || null,
-      pattern_used:    form.pattern_used || null,
+      pattern_used:            patternUsedFinal,          // Sprint 35
+      pattern_certificate_url: patternCertUrlFinal,       // Sprint 35
       pattern_cert_id: form.pattern_cert_id || null,    // Sprint 29
       sensor_type:     form.sensor_type || null,        // Sprint 29 (ya soportado)
       technician_name: form.technician_name.trim(),     // Sprint 29
@@ -300,7 +348,7 @@ export default function CalibrationModal() {
               onChange={(v) => setField('serial_number', v)} placeholder="S/N transmisor" disabled={!canSign} />
           </div>
 
-          {/* Patrón usado — dropdown + Certificado de Patrón */}
+          {/* Patrón usado — Sprint 35: dropdown dinámico + modo "Otro" */}
           <div className="rounded-xl border border-neutral-200 bg-gradient-to-br from-neutral-50 to-white p-4">
             <label className="text-[12px] font-bold text-neutral-800 uppercase tracking-wider flex items-center gap-2 mb-3">
               <svg className="w-4 h-4 text-brand-amber" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -315,20 +363,58 @@ export default function CalibrationModal() {
                   Equipo Patrón
                 </label>
                 <select
-                  value={form.pattern_used}
-                  onChange={(e) => setField('pattern_used', e.target.value)}
-                  disabled={!canSign}
+                  value={form.patron_selection_id}
+                  onChange={(e) => setField('patron_selection_id', e.target.value)}
+                  disabled={!canSign || patronesLoading}
                   className="w-full bg-white border-2 border-neutral-300 rounded-lg px-3 py-2.5 text-[13px] font-semibold focus:ring-4 focus:ring-brand-amber/30 focus:border-brand-amber outline-none cursor-pointer disabled:bg-neutral-100"
                 >
-                  <option value="">— Seleccionar patrón —</option>
-                  {PATRONES_DISPONIBLES.map((p) => (
-                    <option key={p} value={p}>{p}</option>
+                  <option value="">
+                    {patronesLoading ? 'Cargando patrones…' : '— Seleccionar patrón —'}
+                  </option>
+                  {patrones.map((p) => (
+                    <option key={p.id} value={p.id}>{p.nombre}</option>
                   ))}
+                  <option value="otro">Otro (escribir manualmente)</option>
                 </select>
+
+                {/* Link al catálogo si es un patrón estándar */}
+                {patronCatalogo && (
+                  <div className="mt-1.5 flex items-center gap-2 text-[10.5px] flex-wrap">
+                    <Link
+                      href="/catalogos"
+                      target="_blank"
+                      className="text-brand-env hover:underline inline-flex items-center gap-1"
+                    >
+                      <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+                        <polyline points="15 3 21 3 21 9"/>
+                        <line x1="10" y1="14" x2="21" y2="3"/>
+                      </svg>
+                      Ver en Catálogo de Patrones
+                    </Link>
+                    {patronCatalogo.certificate_url && (
+                      <>
+                        <span className="text-neutral-300">·</span>
+                        <a
+                          href={patronCatalogo.certificate_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-brand-env hover:underline inline-flex items-center gap-1"
+                        >
+                          <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                          </svg>
+                          Certificado PDF
+                        </a>
+                      </>
+                    )}
+                  </div>
+                )}
               </div>
 
               <InputField
-                label="Certificado de Patrón"
+                label="Certificado de Patrón (N°)"
                 value={form.pattern_cert_id}
                 onChange={(v) => setField('pattern_cert_id', v)}
                 placeholder="N° Certificado Patrón"
@@ -336,12 +422,36 @@ export default function CalibrationModal() {
               />
             </div>
 
+            {/* Modo "Otro": inputs de nombre + URL manual */}
+            {form.patron_selection_id === 'otro' && (
+              <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3 p-3 rounded-lg bg-brand-amberSoft/30 border border-brand-amber/40">
+                <InputField
+                  label="Nombre del patrón *"
+                  value={form.patron_custom_nombre}
+                  onChange={(v) => setField('patron_custom_nombre', v)}
+                  placeholder="Ej. Fluke 754 prestado"
+                  disabled={!canSign}
+                />
+                <InputField
+                  label="URL del certificado (opcional)"
+                  value={form.patron_custom_url}
+                  onChange={(v) => setField('patron_custom_url', v)}
+                  placeholder="https://…/certificado.pdf"
+                  disabled={!canSign}
+                />
+              </div>
+            )}
+
             <div className="mt-3 flex items-start gap-2.5 p-3 rounded-lg bg-brand-amberSoft/60 border border-brand-amber/40">
               <svg className="w-4 h-4 text-amber-700 mt-0.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
               </svg>
               <div className="text-[12.5px] text-amber-900">
-                <strong>Trazabilidad automática:</strong> el certificado del patrón quedará registrado y se anexa al PDF final.
+                <strong>Trazabilidad automática:</strong> el certificado del patrón se anexa al PDF final.
+                {' '}
+                <Link href="/catalogos" target="_blank" className="underline font-semibold">
+                  Gestionar catálogo →
+                </Link>
               </div>
             </div>
           </div>
