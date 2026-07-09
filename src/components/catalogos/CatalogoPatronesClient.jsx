@@ -317,7 +317,7 @@ export default function CatalogoPatronesClient({ initialPatrones }) {
           Los patrones activos aparecen automáticamente en el dropdown del modal de{' '}
           <strong>Calibración interna</strong>. Cuando el técnico selecciona uno, la URL
           del certificado se copia al registro de la calibración y se anexa al PDF final.
-          La opción <strong>"Otro"</strong> del modal permite ingresar patrones no listados
+          La opción <strong>&ldquo;Otro&rdquo;</strong> del modal permite ingresar patrones no listados
           aquí de forma puntual.
         </div>
       </div>

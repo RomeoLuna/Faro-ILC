@@ -195,7 +195,7 @@ export default function UsersTable({ users, currentUserId }) {
       {/* Footer informativo */}
       <div className="px-5 py-3 border-t border-neutral-200 bg-neutral-50 text-[11.5px] text-neutral-500 flex justify-between items-center flex-wrap gap-2">
         <span>
-          La acción se guarda al instante; el badge &quot;Rol actual&quot; se actualiza tras refrescar.
+          La acción se guarda al instante; el badge &ldquo;Rol actual&rdquo; se actualiza tras refrescar.
         </span>
         <span>
           Cambios protegidos por RLS de Postgres + chequeo server-side.
