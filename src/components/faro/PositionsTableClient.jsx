@@ -28,7 +28,7 @@ const STATUS_OPTIONS = [
   { value: 'VIGENTE',         label: 'Vigente' },
   { value: 'PROXIMO_7',       label: 'Próximo a vencer' },
   { value: 'VENCIDO',         label: 'Vencido (backlog SAP)' },
-  { value: 'NUNCA_CALIBRADO', label: 'Sin OT abierta' },
+  { value: 'NUNCA_CALIBRADO', label: 'Vigente' },
 ];
 
 const STATUS_RANK = {
@@ -129,12 +129,15 @@ function statusBadgeProps(status, daysRemaining, lastSapDateExtrema, freqOverdue
         hint:  daysRemaining != null ? `Atraso ${Math.abs(daysRemaining)} d` : null,
       };
     case 'NUNCA_CALIBRADO':
+  // Sprint 41: cuando no hay OT abierta, la POS ya está al día. Mostrarla
+  // como Vigente igual que VIGENTE — la columna PRÓXIMA (SAP) es la que
+  // indica si hay OT abierta o liberada.
       return {
-        cls:   'bg-neutral-200 text-neutral-700',
-        dot:   'bg-neutral-500',
-        label: 'Sin OT abierta',
-        hint:  lastSapDateExtrema ? `Última ext. ${formatDate(lastSapDateExtrema)}` : 'Sin historial SAP',
-      };
+        cls:   'bg-brand-passSoft text-brand-pass',
+        dot:   'bg-brand-pass',
+        label: 'Vigente',
+        hint:  lastSapDateExtrema ? `Última ext. ${formatDate(lastSapDateExtrema)}` : null,
+       };
     default:
       return {
         cls:   'bg-neutral-200 text-neutral-600',
@@ -356,7 +359,11 @@ export default function PositionsTableClient({ positions, section, onFilteredCha
     setSubAreaFilter('');
   }
 
-  const posClass = section === 'envasado' ? 'text-brand-env' : 'text-brand-eng';
+  // Sprint 36: 3 secciones
+  const posClass =
+    section === 'envasado' ? 'text-brand-env'
+    : section === 'calidad' ? 'text-brand-qual'
+    : 'text-brand-eng';
 
   return (
     <div className="bg-white rounded-xl border border-neutral-200 overflow-hidden shadow-card">
@@ -382,7 +389,7 @@ export default function PositionsTableClient({ positions, section, onFilteredCha
 
         {/* Row 2: buscador + selectores + clear */}
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="flex items-center bg-white border border-neutral-300 rounded-lg px-3 py-1.5 gap-2 min-w-[240px] focus-within:ring-2 focus-within:ring-brand-amber/40 focus-within:border-brand-amber">
+          <div className="flex items-center bg-white border border-neutral-300 rounded-lg px-3 py-1.5 gap-2 w-full sm:w-auto sm:min-w-[240px] focus-within:ring-2 focus-within:ring-brand-amber/40 focus-within:border-brand-amber">
             <svg className="w-4 h-4 text-neutral-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="11" cy="11" r="8" />
               <line x1="21" y1="21" x2="16.65" y2="16.65" />
@@ -452,8 +459,85 @@ export default function PositionsTableClient({ positions, section, onFilteredCha
         </div>
       </div>
 
-      {/* Tabla scrollable */}
-      <div className="overflow-x-auto">
+      {/* Sprint 40b: Vista CARDS mobile (< md) — SIMPLIFICADA */}
+      {/* Solo POS + Equipo + Estado + Botón Info. Los detalles y acciones
+          quedan detrás de InfoModal y RowActions abajo. */}
+      <div className="md:hidden divide-y divide-neutral-100">
+        {processed.map((p) => {
+          const freqOverdue = p._freqOverdue;
+          return (
+            <div key={p.id} className="p-3.5 hover:bg-amber-50/40">
+              {/* Fila superior: POS + Estado */}
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <div className="min-w-0 flex-1">
+                  <div className={`font-mono font-bold text-[13px] ${posClass}`}>
+                    {p.pos_mtto}
+                  </div>
+                  <div className="text-[10px] text-neutral-500 uppercase tracking-wider mt-0.5 truncate">
+                    {p.area || '—'} {p.sub_area && <span className="text-neutral-400">· {p.sub_area}</span>}
+                  </div>
+                </div>
+                <div className="shrink-0">
+                  <StatusBadge
+                    status={p.status}
+                    daysRemaining={p.days_remaining}
+                    lastSapDateExtrema={p.last_sap_date_extrema}
+                    freqOverdue={freqOverdue}
+                  />
+                </div>
+              </div>
+
+              {/* Equipo (solo esto en el body) */}
+              <div className="text-[13px] font-semibold text-neutral-800 mb-2 line-clamp-2" title={p.equipment_name}>
+                {p.equipment_name || '—'}
+              </div>
+
+              {/* Acciones en fila con botón Info primero */}
+              <div className="flex items-center gap-1.5 pt-2 mt-1 border-t border-neutral-100">
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.dispatchEvent(new CustomEvent('open:position-info', { detail: p }));
+                  }}
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 px-2 py-2 rounded-lg border border-brand-ink bg-brand-ink text-brand-amber text-[11.5px] font-bold hover:bg-neutral-800 active:scale-95 transition"
+                  title="Ver detalles"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="16" x2="12" y2="12" />
+                    <line x1="12" y1="8" x2="12.01" y2="8" />
+                  </svg>
+                  Info
+                </button>
+                <div className="flex items-center gap-1">
+                  <RowActions position={p} />
+                </div>
+              </div>
+            </div>
+          );
+        })}
+
+        {processed.length === 0 && (
+          <div className="p-6 text-center text-[13px] text-neutral-500">
+            <div className="font-semibold">Sin coincidencias con los filtros actuales</div>
+            <div className="text-[11.5px] text-neutral-400 mt-1">
+              Prueba con otra palabra, otra área u otro estado.
+            </div>
+            {hasFilters && (
+              <button
+                type="button"
+                onClick={clearAll}
+                className="mt-3 px-3 py-1.5 rounded-lg bg-brand-amber text-black text-[11.5px] font-bold hover:bg-brand-amberHover"
+              >
+                Limpiar filtros
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Tabla scrollable — solo desktop (md+) */}
+      <div className="overflow-x-auto hidden md:block">
         <table className="w-full text-[12.5px]">
           <thead className="bg-neutral-50 border-b-2 border-neutral-200">
             <tr className="text-left">
@@ -487,19 +571,12 @@ export default function PositionsTableClient({ positions, section, onFilteredCha
                     {p.pos_mtto}
                   </td>
 
-                  {/* COLUMNA EQUIPO ACTUALIZADA CON HOVER EXTENDIDO Y TAMAÑO MEJORADO */}
-                  <td className="px-3 py-3 max-w-[280px] min-w-[200px]">
-                    <div 
-                      className="font-semibold text-wrap break-words leading-tight hover:text-brand-amber transition-colors" 
-                      title={p.equipment_name}
-                    >
+                  <td className="px-3 py-3">
+                    <div className="font-semibold line-clamp-1" title={p.equipment_name}>
                       {p.equipment_name || '—'}
                     </div>
                     {p.description && (
-                      <div 
-                        className="text-[11px] text-neutral-500 mt-1 line-clamp-2 hover:line-clamp-none cursor-help transition-all duration-300" 
-                        title="Haz clic o mantén el mouse para ver descripción completa"
-                      >
+                      <div className="text-[11px] text-neutral-500 line-clamp-1" title={p.description}>
                         {p.description}
                       </div>
                     )}

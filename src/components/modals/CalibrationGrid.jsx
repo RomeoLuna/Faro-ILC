@@ -182,8 +182,156 @@ export default function CalibrationGrid({
         </div>
       </div>
 
-      <div className="rounded-lg border border-neutral-200 overflow-hidden">
-        <table className="w-full text-[12.5px]">
+      {/* Sprint 40b: vista CARDS mobile-first (< md) — un card por punto */}
+      <div className="md:hidden space-y-2.5">
+        {computed.map((row, i) => {
+          const cardTone =
+            row.result === 'PASS' ? 'border-brand-pass/40 bg-brand-passSoft/30'
+            : row.result === 'FAIL' ? 'border-brand-fail/40 bg-brand-failSoft/30'
+            : 'border-neutral-200 bg-white';
+
+          return (
+            <div key={i} className={`rounded-xl border-2 ${cardTone} p-3`}>
+              {/* Header: fase + % editable + estado */}
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className={`text-[10px] uppercase tracking-wider font-extrabold ${
+                    row.phase === 'Bajada' ? 'text-brand-amber'
+                    : row.phase === 'Pico Máx' ? 'text-brand-amber'
+                    : 'text-neutral-500'
+                  }`}>
+                    {row.phase}
+                  </span>
+                  <span className="text-neutral-300">·</span>
+                  <div className="flex items-center gap-1.5">
+                    <input
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      max="100"
+                      value={pcts[i]}
+                      onChange={(e) => setPct(i, e.target.value)}
+                      disabled={readOnly}
+                      className="w-14 px-1.5 py-1 border-2 border-blue-400 rounded-md text-center font-bold text-[13px] bg-blue-50/50 focus:outline-none focus:ring-2 focus:ring-blue-400/40 disabled:bg-neutral-100 disabled:border-neutral-300 disabled:text-neutral-500"
+                    />
+                    <span className="text-[11.5px] font-bold text-neutral-500">%</span>
+                  </div>
+                </div>
+                <div>
+                  {row.result === 'PASS' && (
+                    <span className="px-2.5 py-1 rounded-full text-[10.5px] font-extrabold bg-brand-pass text-white">
+                      PASA
+                    </span>
+                  )}
+                  {row.result === 'FAIL' && (
+                    <span className="px-2.5 py-1 rounded-full text-[10.5px] font-extrabold bg-brand-fail text-white">
+                      FALLA
+                    </span>
+                  )}
+                  {!row.result && (
+                    <span className="px-2.5 py-1 rounded-full text-[10.5px] font-semibold bg-neutral-200 text-neutral-600">
+                      Pendiente
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Grid interno: Nominal + Esperado */}
+              <div className="grid grid-cols-2 gap-2 mb-3">
+                <div className="rounded-lg border border-neutral-200 bg-emerald-50/30 px-3 py-2">
+                  <div className="text-[9.5px] uppercase tracking-wider text-neutral-500 font-bold mb-0.5">
+                    Nominal (mA)
+                  </div>
+                  <div className="text-[15px] font-bold text-neutral-800">
+                    {row.nominal_ma.toFixed(2)}
+                  </div>
+                </div>
+                <div className={`rounded-lg border px-3 py-2 ${
+                  row.col4Muted
+                    ? 'border-neutral-200 bg-neutral-50'
+                    : 'border-blue-300 bg-blue-50/50'
+                }`}>
+                  <div className="text-[9.5px] uppercase tracking-wider text-neutral-500 font-bold mb-0.5">
+                    {headerCol4}
+                  </div>
+                  <div className={`text-[14px] font-bold ${
+                    row.col4Muted ? 'text-neutral-400' : 'text-blue-700'
+                  }`}>
+                    {row.col4Display}
+                  </div>
+                </div>
+              </div>
+
+              {/* Input GRANDE de lectura */}
+              <div className="mb-2">
+                <label className="block text-[10.5px] uppercase tracking-wider font-bold text-neutral-600 mb-1">
+                  {headerCol5}
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    inputMode="decimal"
+                    step="0.001"
+                    value={readings[i]}
+                    onChange={(e) => setReading(i, e.target.value)}
+                    disabled={readOnly}
+                    placeholder="--.--"
+                    className="flex-1 px-3 py-3 border-2 border-brand-amber rounded-lg text-center font-bold text-[18px] bg-amber-50 focus:outline-none focus:ring-4 focus:ring-brand-amber/30 disabled:bg-neutral-100 disabled:border-neutral-300 disabled:text-neutral-500"
+                  />
+                  <span className="text-[13px] font-bold text-neutral-700 min-w-[36px] text-center">
+                    {inputUnit}
+                  </span>
+                </div>
+              </div>
+
+              {/* Error % footer */}
+              <div className="flex items-center justify-between pt-2 border-t border-neutral-200/60">
+                <span className="text-[10px] uppercase tracking-wider text-neutral-500 font-bold">
+                  Error
+                </span>
+                <span className={`text-[13px] font-mono font-bold ${
+                  row.result === 'PASS' ? 'text-brand-pass'
+                  : row.result === 'FAIL' ? 'text-brand-fail'
+                  : 'text-neutral-500'
+                }`}>
+                  {row.error_pct != null ? `${row.error_pct.toFixed(2)}%` : '—'}
+                </span>
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Resultado global mobile */}
+        <div className="rounded-xl border-2 border-brand-ink bg-neutral-50 p-3 flex items-center justify-between">
+          <span className="text-[11px] uppercase tracking-wider font-bold text-neutral-700">
+            Resultado global
+          </span>
+          {globalResult === 'PASS' && (
+            <span className="px-3 py-1.5 rounded-full text-[12px] font-extrabold bg-brand-pass text-white">
+              PASS
+            </span>
+          )}
+          {globalResult === 'PASS_LIMITE' && (
+            <span className="px-3 py-1.5 rounded-full text-[12px] font-extrabold bg-brand-warn text-white">
+              LÍMITE
+            </span>
+          )}
+          {globalResult === 'FAIL' && (
+            <span className="px-3 py-1.5 rounded-full text-[12px] font-extrabold bg-brand-fail text-white">
+              FAIL
+            </span>
+          )}
+          {globalResult === 'PENDING' && (
+            <span className="px-3 py-1.5 rounded-full text-[12px] font-semibold bg-neutral-300 text-neutral-700">
+              Pendiente
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Tabla — solo desktop (md+) */}
+      <div className="hidden md:block rounded-lg border border-neutral-200 overflow-x-auto">
+        <table className="w-full text-[12.5px] min-w-[720px]">
           <thead className="bg-brand-ink text-brand-amber">
             <tr>
               <th className="px-3 py-2 text-center w-24">Fase</th>

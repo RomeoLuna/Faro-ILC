@@ -1,35 +1,18 @@
 'use client';
 // components/dashboard/SubAreaComplianceBars.jsx
 // =========================================================================
-// SUB-AREA COMPLIANCE BARS — Sprint 37 (reemplaza ComplianceChart)
+// SUB-AREA COMPLIANCE BARS — Sprint 41
 // -------------------------------------------------------------------------
-// Card con:
-//   • Header: título + píldora "% cumplimiento sección" + selector de período
-//   • Grid de barras verticales apiladas (una por sub-área/línea)
-//     Cada barra: verde (VIGENTE + NUNCA_CALIBRADO) / ámbar (PROXIMO_7)
-//                 / rojo (VENCIDO). % dentro del segmento si ≥ 8%.
-//   • Separador visual
-//   • 2 barras "consolidadas": Global Sección + Global Planta
+// Barras por sub-área/línea (3 colores) + 2 barras consolidadas
+// (verde+ámbar fusionados en "No vencidas").
 //
-// AGRUPACIÓN por sección:
-//   envasado    → agrupa por `area_name` (Línea 1, Línea 2, Línea 4)
-//   ingenieria  → agrupa por `area_name` (Elaboración, BTS, Caldera, …)
-//   calidad     → agrupa por `sub_area`   (PLANTA CERVEZA, PATRONES)
-//
-// CRITERIO DE FILTRO:
-//   period='all'   → todas las POS de la sección
-//   period=otros   → POS cuyo next_sap_date cae en el período
-//                    (mismo criterio que StatusDonut / TrendLine)
-//
-// GLOBAL PLANTA: fetch client-side al mount de todas las POS activas
-//                (sin importar sección) para el snapshot cross-planta.
+// CUMPLIMIENTO = (vigentes + próximas a vencer) / total.
 // =========================================================================
 
 import { useEffect, useMemo, useState } from 'react';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { PERIODS, periodRange, inRange, periodLabel } from '@/lib/periodRange';
 
-// ─── Categorización de una POS por su status enum del view ──────────────
 function bucketOf(status) {
   if (status === 'VENCIDO')                                return 'rojo';
   if (status === 'PROXIMO_7')                              return 'warn';
@@ -37,20 +20,17 @@ function bucketOf(status) {
   return null;
 }
 
-// ─── Filtro por período (mismo criterio que StatusDonut) ────────────────
 function keepByPeriod(p, period) {
   if (period === 'all') return true;
   const [start, end] = periodRange(period);
   return p.next_sap_date && inRange(p.next_sap_date, start, end);
 }
 
-// ─── Nombre del bucket a mostrar en el label debajo de la barra ─────────
 function bucketKey(p, section) {
   if (section === 'calidad') return (p.sub_area || '—').trim();
   return (p.area_name || p.area || '—').trim();
 }
 
-// ─── Cuenta {verde, warn, rojo, total, pct*} para un conjunto de POS ────
 function tallyStatus(rows) {
   let verde = 0, warn = 0, rojo = 0;
   for (const p of rows) {
@@ -68,10 +48,8 @@ function tallyStatus(rows) {
   };
 }
 
-// ─── Componente principal ──────────────────────────────────────────────
 export default function SubAreaComplianceBars({ positions, section, period, setPeriod }) {
 
-  // Fetch client-side de TODAS las POS activas (para la barra "Global Planta")
   const [plantaAll, setPlantaAll] = useState([]);
   useEffect(() => {
     let cancelled = false;
@@ -86,7 +64,6 @@ export default function SubAreaComplianceBars({ positions, section, period, setP
     return () => { cancelled = true; };
   }, []);
 
-  // Filtrar por período (mismo criterio para las 3 vistas: sub-área, sección, planta)
   const subsetSection = useMemo(
     () => positions.filter((p) => keepByPeriod(p, period)),
     [positions, period]
@@ -97,7 +74,6 @@ export default function SubAreaComplianceBars({ positions, section, period, setP
     [plantaAll, period]
   );
 
-  // Agrupar por sub-área/línea y calcular tally para cada grupo
   const grupos = useMemo(() => {
     const buckets = new Map();
     for (const p of subsetSection) {
@@ -105,7 +81,6 @@ export default function SubAreaComplianceBars({ positions, section, period, setP
       if (!buckets.has(key)) buckets.set(key, []);
       buckets.get(key).push(p);
     }
-    // Ordenar alfabéticamente para consistencia visual
     return Array.from(buckets.entries())
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([key, rows]) => ({ key, ...tallyStatus(rows) }));
@@ -114,14 +89,13 @@ export default function SubAreaComplianceBars({ positions, section, period, setP
   const consolidadoSeccion = useMemo(() => tallyStatus(subsetSection), [subsetSection]);
   const consolidadoPlanta  = useMemo(() => tallyStatus(subsetPlanta),  [subsetPlanta]);
 
-  // % cumplimiento de la sección para el header pill
+  // Sprint 41: cumplimiento = NO VENCIDAS / total (vigentes + próximas a vencer).
   const cumplimientoSeccion = consolidadoSeccion.total
-    ? Math.round(consolidadoSeccion.pctVerde)
+    ? Math.round(consolidadoSeccion.pctVerde + consolidadoSeccion.pctWarn)
     : null;
 
   return (
     <div className="bg-white rounded-xl border border-neutral-200 shadow-card mb-6">
-      {/* ─── Header ─────────────────────────────────────────────────── */}
       <div className="px-5 py-3 border-b border-neutral-200 bg-neutral-50 flex items-center justify-between flex-wrap gap-3">
         <div>
           <div className="text-[12px] uppercase tracking-wider text-neutral-600 font-bold">
@@ -152,7 +126,6 @@ export default function SubAreaComplianceBars({ positions, section, period, setP
         </div>
       </div>
 
-      {/* ─── Cuerpo ─────────────────────────────────────────────────── */}
       <div className="p-5">
         {consolidadoSeccion.total === 0 ? (
           <div className="text-center text-[13px] italic text-neutral-400 py-8">
@@ -160,34 +133,31 @@ export default function SubAreaComplianceBars({ positions, section, period, setP
           </div>
         ) : (
           <div className="flex items-stretch gap-4 overflow-x-auto pb-2">
-            {/* Barras por sub-área */}
             {grupos.map((g) => (
               <StackedBar key={g.key} label={g.key} tally={g} />
             ))}
 
-            {/* Separador visual */}
             {grupos.length > 0 && (
               <div className="border-l-2 border-dashed border-neutral-200 mx-2" />
             )}
 
-            {/* Barra consolidada: Global Sección */}
+            {/* Sprint 41: consolidadas colapsan verde+ámbar. */}
             <StackedBar
               label={`Total ${sectionShortLabel(section)}`}
               tally={consolidadoSeccion}
               highlight="section"
+              mergeGreenAndWarn
             />
-
-            {/* Barra consolidada: Global Planta */}
             <StackedBar
               label="Total Planta"
               tally={consolidadoPlanta}
               highlight="planta"
               loading={plantaAll.length === 0}
+              mergeGreenAndWarn
             />
           </div>
         )}
 
-        {/* Leyenda inferior */}
         <div className="mt-5 pt-3 border-t border-neutral-100 flex items-center gap-5 flex-wrap text-[11.5px]">
           <LegendDot color="bg-brand-pass" label="Vigentes" />
           <LegendDot color="bg-brand-warn" label="Próximas a vencer (30d)" />
@@ -201,11 +171,14 @@ export default function SubAreaComplianceBars({ positions, section, period, setP
   );
 }
 
-// ─── Sub-componentes ──────────────────────────────────────────────────
-function StackedBar({ label, tally, highlight = null, loading = false }) {
+function StackedBar({ label, tally, highlight = null, loading = false, mergeGreenAndWarn = false }) {
   const { verde, warn, rojo, total, pctVerde, pctWarn, pctRojo } = tally;
 
-  // Toque estético: los consolidados llevan un halo/tinte de fondo
+  const showWarn         = !mergeGreenAndWarn && warn > 0;
+  const combinedVerde    = mergeGreenAndWarn ? verde + warn : verde;
+  const combinedPctVerde = mergeGreenAndWarn ? (pctVerde + pctWarn) : pctVerde;
+  const verdeLabel       = mergeGreenAndWarn ? 'No vencidas' : 'Vigentes';
+
   const cardCls =
     highlight === 'section' ? 'bg-brand-amberSoft/40 border-brand-amber/30' :
     highlight === 'planta'  ? 'bg-neutral-100 border-neutral-300' :
@@ -218,7 +191,6 @@ function StackedBar({ label, tally, highlight = null, loading = false }) {
 
   return (
     <div className={`flex flex-col items-center gap-2 min-w-[92px] rounded-lg border ${cardCls} p-2.5`}>
-      {/* Barra vertical apilada */}
       <div className="relative w-11 h-52 rounded-md overflow-hidden bg-neutral-100 border border-neutral-200 flex flex-col justify-end">
         {total === 0 && !loading && (
           <div className="absolute inset-0 grid place-items-center text-[9.5px] italic text-neutral-400">
@@ -231,7 +203,6 @@ function StackedBar({ label, tally, highlight = null, loading = false }) {
           </div>
         )}
 
-        {/* Rojo (VENCIDO) — abajo */}
         {rojo > 0 && (
           <div
             className="w-full bg-brand-fail transition-all duration-500 flex items-center justify-center"
@@ -246,8 +217,7 @@ function StackedBar({ label, tally, highlight = null, loading = false }) {
           </div>
         )}
 
-        {/* Ámbar (PROXIMO_7) — en medio */}
-        {warn > 0 && (
+        {showWarn && (
           <div
             className="w-full bg-brand-warn transition-all duration-500 flex items-center justify-center"
             style={{ height: `${pctWarn}%` }}
@@ -261,23 +231,21 @@ function StackedBar({ label, tally, highlight = null, loading = false }) {
           </div>
         )}
 
-        {/* Verde (VIGENTE + NUNCA_CALIBRADO) — arriba */}
-        {verde > 0 && (
+        {combinedVerde > 0 && (
           <div
             className="w-full bg-brand-pass transition-all duration-500 flex items-center justify-center relative"
-            style={{ height: `${pctVerde}%` }}
-            title={`Vigentes: ${verde} (${pctVerde.toFixed(1)}%)`}
+            style={{ height: `${combinedPctVerde}%` }}
+            title={`${verdeLabel}: ${combinedVerde} (${combinedPctVerde.toFixed(1)}%)`}
           >
-            {pctVerde >= 12 && (
+            {combinedPctVerde >= 12 && (
               <span className="text-[11px] font-extrabold text-white leading-none">
-                {pctVerde.toFixed(1)}%
+                {combinedPctVerde.toFixed(1)}%
               </span>
             )}
           </div>
         )}
       </div>
 
-      {/* Label + total */}
       <div className="text-center max-w-[110px]">
         <div className={`text-[11px] font-bold leading-tight uppercase tracking-wide ${numberCls} truncate`} title={label}>
           {label}
