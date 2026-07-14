@@ -132,12 +132,18 @@ export async function saveCalibrationEvent(payload) {
   if (
     payload.technician_name ||
     payload.pattern_cert_id ||
-    payload.pattern_certificate_url
+    payload.pattern_certificate_url ||
+    payload.performed_at
   ) {
     const patch = {};
     if (payload.technician_name)         patch.technician_name = payload.technician_name;
     if (payload.pattern_cert_id)         patch.pattern_cert_id = payload.pattern_cert_id;
     if (payload.pattern_certificate_url) patch.pattern_certificate_url = payload.pattern_certificate_url;
+    // Sprint 42: fecha editable de la calibración
+    if (payload.performed_at) {
+      const d = new Date(`${payload.performed_at}T12:00:00`);
+      if (!isNaN(d.getTime())) patch.performed_at = d.toISOString();
+    }
 
     const { error: patchErr } = await supabase
       .from('calibration_events')
@@ -153,6 +159,7 @@ export async function saveCalibrationEvent(payload) {
   // ── 5) Invalidar caché del faro ─────────────────────────────────────────
   revalidatePath('/envasado');
   revalidatePath('/ingenieria');
+  revalidatePath('/calidad');
 
   return { ok: true, event_id: eventId };
 }
@@ -436,6 +443,7 @@ export async function saveExternalCalibration(formData) {
   // ── 5) Invalidar caché del faro ─────────────────────────────────────────
   revalidatePath('/envasado');
   revalidatePath('/ingenieria');
+  revalidatePath('/calidad');
 
   return {
     ok: true,

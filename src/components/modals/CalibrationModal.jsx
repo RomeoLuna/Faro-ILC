@@ -37,6 +37,12 @@ import { generateAndDownloadCertificate, roleLabel } from '@/lib/pdf-download';
 //   • un uuid  → patrón del catálogo
 //   • 'otro'   → modo custom (nombre + URL escritos a mano)
 //   • ''       → sin seleccionar
+// Helper: fecha de hoy en formato YYYY-MM-DD (para <input type="date">)
+function todayIso() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 const INITIAL_FORM = {
   sap_wo:                  '',
   instrument_tag:          '',
@@ -53,6 +59,9 @@ const INITIAL_FORM = {
   modo:                    'mA',
   supervisor_id:           '',
   technician_name:         '',
+  // Sprint 42:
+  puntos_n:                5,       // N puntos canónicos (2..5). Default 5.
+  performed_at:            '',      // fecha de calibración (YYYY-MM-DD)
 };
 
 export default function CalibrationModal() {
@@ -82,6 +91,16 @@ export default function CalibrationModal() {
     return patrones.find((p) => p.id === form.patron_selection_id) || null;
   }, [form.patron_selection_id, patrones]);
 
+  // Sprint 43: auto-fill del N° certificado al elegir un patrón del catálogo
+  // que tenga cert_number. Solo se llena si el campo estaba vacío para no
+  // pisar un valor que el técnico ya haya escrito manualmente.
+  useEffect(() => {
+    if (patronCatalogo?.cert_number && !form.pattern_cert_id?.trim()) {
+      setForm((prev) => ({ ...prev, pattern_cert_id: patronCatalogo.cert_number }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patronCatalogo?.id]);
+
   useEffect(() => {
     function handler(e) {
       const p = e.detail;
@@ -92,6 +111,7 @@ export default function CalibrationModal() {
         sensor_type:  p.sensor_type || 'Temperatura',
         range_min:    p.range_min ?? '',
         range_max:    p.range_max ?? '',
+        performed_at: todayIso(),   // Sprint 42: auto-fill fecha de hoy
         unit:         p.unit || '',
       });
       setGrid({ points: [], globalResult: 'PENDING' });
@@ -111,7 +131,7 @@ export default function CalibrationModal() {
       const supabase = createSupabaseBrowserClient();
       const { data, error: err } = await supabase
         .from('patrones_catalogo')
-        .select('id, nombre, certificate_url')
+        .select('id, nombre, certificate_url, pos_mtto, cert_number')
         .eq('active', true)
         .order('nombre', { ascending: true });
       if (cancelled) return;
@@ -158,10 +178,10 @@ export default function CalibrationModal() {
       setError('Falta el rango mín/máx del instrumento.');
       return;
     }
-    // Sprint 32: ya no exigimos las 9 lecturas. Algunas calibraciones
-    // se hacen solo en 3 o 5 puntos según el procedimiento del equipo.
-    // Solo verificamos que el grid haya emitido la estructura base.
-    if (!grid.points || grid.points.length !== 9) {
+    // Sprint 42: número de filas depende de puntos_n (2..5 → 3/5/7/9 filas).
+    // Validamos solo que la estructura base exista con filas impares.
+    const validRowCounts = [3, 5, 7, 9];
+    if (!grid.points || !validRowCounts.includes(grid.points.length)) {
       setError('Error interno: la tabla de puntos no se inicializó correctamente.');
       return;
     }
@@ -205,6 +225,9 @@ export default function CalibrationModal() {
       supervisor_signature: supervisor.signature, // puede ser null para Roberto/Dubla
       result: grid.globalResult,
       points: grid.points,
+      // Sprint 42:
+      performed_at:         form.performed_at || null,
+      puntos_n:             form.puntos_n,
     };
 
     setSaving(true);
@@ -249,12 +272,13 @@ export default function CalibrationModal() {
 
   return (
     <div
-      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-6"
+      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-0 md:p-6"
       onClick={(e) => {
         if (e.target === e.currentTarget && !saving) setOpen(false);
       }}
     >
-      <div className="bg-white rounded-2xl w-full max-w-5xl max-h-[94vh] overflow-hidden shadow-pop border-t-4 border-brand-ink flex flex-col">
+      {/* Sprint 40: full-screen en mobile, contenido en desktop */}
+      <div className="bg-white w-full h-full md:h-auto md:rounded-2xl md:max-w-5xl md:max-h-[94vh] overflow-hidden shadow-pop border-t-4 border-brand-ink flex flex-col">
 
         {/* Header */}
         <div className="px-6 py-4 border-b border-neutral-200 flex items-start justify-between">
@@ -295,7 +319,7 @@ export default function CalibrationModal() {
           )}
 
           {/* POS (read-only) */}
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <ReadField label="POS MTTO"  value={position.pos_mtto} mono />
             <ReadField label="Área"      value={position.area_name || '—'} />
             <ReadField label="Plan MTTO" value={position.maintenance_plan || '—'} />
@@ -329,7 +353,7 @@ export default function CalibrationModal() {
           </div>
 
           {/* OT + Tag + Serie */}
-          <div className="grid grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div>
               <InputField label="Orden de Trabajo (SAP)" value={form.sap_wo}
                 onChange={(v) => setField('sap_wo', v)} placeholder="Ej. 10058493" disabled={!canSign} />
@@ -380,6 +404,29 @@ export default function CalibrationModal() {
                 {/* Link al catálogo si es un patrón estándar */}
                 {patronCatalogo && (
                   <div className="mt-1.5 flex items-center gap-2 text-[10.5px] flex-wrap">
+                    {/* Sprint 42: POS del patrón como chip */}
+                    {patronCatalogo.pos_mtto && (
+                      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-brand-envSoft border border-brand-env/30 text-brand-env font-mono font-semibold">
+                        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <rect x="3" y="3" width="18" height="18" rx="2" />
+                          <path d="M9 9h6M9 13h6M9 17h4" />
+                        </svg>
+                        POS {patronCatalogo.pos_mtto}
+                      </span>
+                    )}
+                    {/* Sprint 43: N° certificado del catálogo como chip */}
+                    {patronCatalogo.cert_number && (
+                      <span
+                        className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-brand-passSoft border border-brand-pass/30 text-brand-pass font-mono font-semibold"
+                        title="Auto-completado en 'Certificado de Patrón (N°)'"
+                      >
+                        <svg className="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M9 12l2 2 4-4" />
+                          <circle cx="12" cy="12" r="10" />
+                        </svg>
+                        N° {patronCatalogo.cert_number}
+                      </span>
+                    )}
                     <Link
                       href="/catalogos"
                       target="_blank"
@@ -390,7 +437,7 @@ export default function CalibrationModal() {
                         <polyline points="15 3 21 3 21 9"/>
                         <line x1="10" y1="14" x2="21" y2="3"/>
                       </svg>
-                      Ver en Catálogo de Patrones
+                      Ver en Catálogo
                     </Link>
                     {patronCatalogo.certificate_url && (
                       <>
@@ -457,7 +504,7 @@ export default function CalibrationModal() {
           </div>
 
           {/* Configuración del lazo (con unidades dinámicas según sensor) */}
-          <div className="grid grid-cols-4 gap-3 items-end">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 items-end">
             <InputField label="Rango mín (4 mA)" type="number" value={form.range_min}
               onChange={(v) => setField('range_min', v)} placeholder="0" disabled={!canSign} />
             <InputField label="Rango máx (20 mA)" type="number" value={form.range_max}
@@ -491,19 +538,60 @@ export default function CalibrationModal() {
             </div>
           </div>
 
-          {/* Grid de 9 puntos */}
+          {/* Sprint 42: Selector de N puntos + fecha de la calibración */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-xl border border-neutral-200 bg-gradient-to-br from-neutral-50 to-white p-4">
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-600 mb-1">
+                Cantidad de puntos <span className="text-brand-fail">*</span>
+              </label>
+              <select
+                value={form.puntos_n}
+                onChange={(e) => setField('puntos_n', Number(e.target.value))}
+                disabled={!canSign}
+                className="w-full bg-white border-2 border-neutral-300 rounded-lg px-3 py-2.5 text-[13px] font-semibold focus:ring-4 focus:ring-brand-amber/30 focus:border-brand-amber outline-none cursor-pointer disabled:bg-neutral-100"
+              >
+                <option value={2}>2 puntos (3 filas · 0 · 100 · 0)</option>
+                <option value={3}>3 puntos (5 filas · 0 · 50 · 100 · 50 · 0)</option>
+                <option value={4}>4 puntos (7 filas · 0 · 33 · 67 · 100 · 67 · 33 · 0)</option>
+                <option value={5}>5 puntos (9 filas · 0 · 25 · 50 · 75 · 100 · 75 · 50 · 25 · 0)</option>
+              </select>
+              <div className="mt-1.5 text-[10.5px] text-neutral-500">
+                Siempre se hace subida y bajada, excepto en el punto máximo.
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-600 mb-1">
+                Fecha de calibración <span className="text-brand-fail">*</span>
+              </label>
+              <input
+                type="date"
+                value={form.performed_at}
+                onChange={(e) => setField('performed_at', e.target.value)}
+                disabled={!canSign}
+                max={todayIso()}
+                className="w-full bg-white border-2 border-neutral-300 rounded-lg px-3 py-2.5 text-[13px] font-semibold focus:ring-4 focus:ring-brand-amber/30 focus:border-brand-amber outline-none disabled:bg-neutral-100"
+              />
+              <div className="mt-1.5 text-[10.5px] text-neutral-500">
+                Auto-llenado con la fecha actual. Editable si la calibración fue otro día.
+              </div>
+            </div>
+          </div>
+
+          {/* Grid dinámico según puntos_n */}
           <CalibrationGrid
             rangeMin={form.range_min}
             rangeMax={form.range_max}
             unit={form.unit}
             tolerance={tolerance}
             modo={form.modo}
+            puntosN={form.puntos_n}
             readOnly={!canSign}
             onChange={setGrid}
           />
 
           {/* Técnico + Supervisor — Sprint 29: ambos editables */}
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {/* Técnico = INPUT editable (cambio Sprint 29) */}
             <div>
               <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-600 mb-1">

@@ -26,9 +26,9 @@
 // y la fila se pinta verde/rojo según |error| ≤ tolerance.
 // =========================================================================
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  PUNTOS,
+  buildPuntos,
   calcularPunto,
   fisicoToMa,
   maToFisico,
@@ -41,14 +41,23 @@ export default function CalibrationGrid({
   unit = '',
   tolerance = 0.5,
   modo = 'mA',           // 'mA' | 'fisico'
+  puntosN = 5,           // Sprint 42: 2..5 puntos canónicos
   readOnly = false,
   onChange,
 }) {
-  // Estado: lecturas del técnico (9 strings)
-  const [readings, setReadings] = useState(() => Array(9).fill(''));
-  // Sprint 31: % editable por fila. Iniciamos con los canónicos del HTML
-  // (0/25/50/75/100/75/50/25/0). El técnico los puede ajustar caso por caso.
+  // Sprint 42: puntos generados dinámicamente por N
+  const PUNTOS = useMemo(() => buildPuntos(puntosN), [puntosN]);
+  const totalRows = PUNTOS.length;
+
+  // Estado: lecturas del técnico. Se resetea si cambia N.
+  const [readings, setReadings] = useState(() => Array(totalRows).fill(''));
   const [pcts, setPcts] = useState(() => PUNTOS.map((p) => String(p.pct)));
+
+  // Al cambiar N, resetear estado con nueva cantidad
+  useEffect(() => {
+    setReadings(Array(totalRows).fill(''));
+    setPcts(PUNTOS.map((p) => String(p.pct)));
+  }, [puntosN, totalRows]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Helper: parsea un pct con clamp [0..100] ─────────────────────────────
   function parsePct(raw) {

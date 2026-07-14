@@ -19,7 +19,7 @@ export default async function CatalogosPage() {
 
   const { data: patrones, error } = await supabase
     .from('patrones_catalogo')
-    .select('id, nombre, certificate_url, active, updated_at')
+    .select('id, nombre, certificate_url, pos_mtto, cert_number, active, updated_at')
     .eq('active', true)
     .order('nombre', { ascending: true });
 

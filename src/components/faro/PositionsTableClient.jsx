@@ -28,7 +28,7 @@ const STATUS_OPTIONS = [
   { value: 'VIGENTE',         label: 'Vigente' },
   { value: 'PROXIMO_7',       label: 'Próximo a vencer' },
   { value: 'VENCIDO',         label: 'Vencido (backlog SAP)' },
-  { value: 'NUNCA_CALIBRADO', label: 'Vigente' },
+  { value: 'NUNCA_CALIBRADO', label: 'Vigente (sin OT próxima)' },
 ];
 
 const STATUS_RANK = {
@@ -129,15 +129,15 @@ function statusBadgeProps(status, daysRemaining, lastSapDateExtrema, freqOverdue
         hint:  daysRemaining != null ? `Atraso ${Math.abs(daysRemaining)} d` : null,
       };
     case 'NUNCA_CALIBRADO':
-  // Sprint 41: cuando no hay OT abierta, la POS ya está al día. Mostrarla
-  // como Vigente igual que VIGENTE — la columna PRÓXIMA (SAP) es la que
-  // indica si hay OT abierta o liberada.
+      // Sprint 41: cuando no hay OT abierta, la POS ya está al día (nada
+      // por vencer). Mostrarla como Vigente igual que VIGENTE — la columna
+      // PRÓXIMA (SAP) es la que indica si hay OT abierta o liberada.
       return {
         cls:   'bg-brand-passSoft text-brand-pass',
         dot:   'bg-brand-pass',
         label: 'Vigente',
         hint:  lastSapDateExtrema ? `Última ext. ${formatDate(lastSapDateExtrema)}` : null,
-       };
+      };
     default:
       return {
         cls:   'bg-neutral-200 text-neutral-600',
@@ -268,6 +268,42 @@ export default function PositionsTableClient({ positions, section, onFilteredCha
   const [subAreaFilter, setSubAreaFilter] = useState('');
   const [statusFilter, setStatusFilter]   = useState('');
   const [sort, setSort]                   = useState({ key: null, dir: 'asc' });
+
+  // Sprint 42: ancho editable de la columna "Equipo / Descripción" (persistido en localStorage)
+  const [equipoWidth, setEquipoWidth]     = useState(260);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const saved = window.localStorage.getItem('faro:equipoColWidth');
+    if (saved) {
+      const n = Number(saved);
+      if (Number.isFinite(n) && n >= 120 && n <= 800) setEquipoWidth(n);
+    }
+  }, []);
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem('faro:equipoColWidth', String(equipoWidth));
+  }, [equipoWidth]);
+
+  function startColResize(e) {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = equipoWidth;
+    function onMove(ev) {
+      const delta = ev.clientX - startX;
+      const next = Math.max(120, Math.min(800, startW + delta));
+      setEquipoWidth(next);
+    }
+    function onUp() {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    }
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
+  }
 
   // ── Enriched: aplica el override de frecuencia técnica antes que nada ──
   // Cada fila gana:
@@ -542,7 +578,19 @@ export default function PositionsTableClient({ positions, section, onFilteredCha
           <thead className="bg-neutral-50 border-b-2 border-neutral-200">
             <tr className="text-left">
               <th className="px-3 py-3 font-bold text-[10.5px] uppercase tracking-wider text-neutral-700">POS MTTO</th>
-              <th className="px-3 py-3 font-bold text-[10.5px] uppercase tracking-wider text-neutral-700">Equipo / Descripción</th>
+              {/* Sprint 42: columna redimensionable */}
+              <th
+                className="px-3 py-3 font-bold text-[10.5px] uppercase tracking-wider text-neutral-700 relative group"
+                style={{ width: equipoWidth, minWidth: 120, maxWidth: 800 }}
+              >
+                <span>Equipo / Descripción</span>
+                <span
+                  onMouseDown={startColResize}
+                  title="Arrastrar para redimensionar"
+                  className="absolute top-0 right-0 h-full w-1.5 cursor-col-resize hover:bg-brand-amber/60 group-hover:bg-brand-amber/30 transition-colors select-none"
+                  aria-hidden="true"
+                />
+              </th>
               <th className="px-3 py-3">
                 <SortHeader label="Área / Sub-área" sortKey="area" current={sort} onClick={toggleSort} />
               </th>
@@ -571,12 +619,15 @@ export default function PositionsTableClient({ positions, section, onFilteredCha
                     {p.pos_mtto}
                   </td>
 
-                  <td className="px-3 py-3">
-                    <div className="font-semibold line-clamp-1" title={p.equipment_name}>
+                  <td
+                    className="px-3 py-3 align-top"
+                    style={{ width: equipoWidth, maxWidth: equipoWidth }}
+                  >
+                    <div className="font-semibold break-words whitespace-normal" title={p.equipment_name}>
                       {p.equipment_name || '—'}
                     </div>
                     {p.description && (
-                      <div className="text-[11px] text-neutral-500 line-clamp-1" title={p.description}>
+                      <div className="text-[11px] text-neutral-500 break-words whitespace-normal" title={p.description}>
                         {p.description}
                       </div>
                     )}

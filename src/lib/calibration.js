@@ -10,7 +10,7 @@
 export const SPAN_LOOP = 16;
 
 /** Tolerancia por defecto (±%) — la app puede sobreescribirla por POS. */
-export const TOLERANCIA_DEFAULT = 5.0;
+export const TOLERANCIA_DEFAULT = 0.5;
 
 /** Categorías de sensores soportadas (con sus unidades válidas). */
 export const SENSORES = {
@@ -24,17 +24,54 @@ export const SENSORES = {
   'pH/ORP':      ['pH'],
 };
 
-/** Los 9 puntos canónicos (subida 0..100 + bajada 75..0). */
-export const PUNTOS = [
-  { pct: 0,   nominal_ma: 4.00,  fase: 'Subida' },
-  { pct: 25,  nominal_ma: 8.00,  fase: 'Subida' },
-  { pct: 50,  nominal_ma: 12.00, fase: 'Subida' },
-  { pct: 75,  nominal_ma: 16.00, fase: 'Subida' },
-  { pct: 100, nominal_ma: 20.00, fase: 'Pico Máx' },
-  { pct: 75,  nominal_ma: 16.00, fase: 'Bajada' },
-  { pct: 50,  nominal_ma: 12.00, fase: 'Bajada' },
-  { pct: 25,  nominal_ma: 8.00,  fase: 'Bajada' },
-  { pct: 0,   nominal_ma: 4.00,  fase: 'Bajada' },
+/**
+ * Sprint 42: generador dinámico de puntos.
+ *
+ * N = cantidad de puntos "canónicos" antes del pico.
+ * Genera N-1 pasos de subida + 1 pico + N-1 pasos de bajada.
+ *
+ *   N=2 → [0, 100, 0]                              (3 filas)
+ *   N=3 → [0, 50, 100, 50, 0]                      (5 filas)
+ *   N=4 → [0, 33.33, 66.67, 100, 66.67, 33.33, 0]  (7 filas)
+ *   N=5 → [0, 25, 50, 75, 100, 75, 50, 25, 0]      (9 filas — default histórico)
+ */
+export function buildPuntos(N) {
+  const n = Math.max(2, Math.min(5, Number(N) || 5));
+  const puntos = [];
+
+  // Subida (excluye el pico)
+  for (let i = 0; i < n - 1; i++) {
+    const pct = (i / (n - 1)) * 100;
+    puntos.push({
+      pct,
+      nominal_ma: 4 + (pct / 100) * 16,
+      fase: 'Subida',
+    });
+  }
+  // Pico máximo
+  puntos.push({ pct: 100, nominal_ma: 20, fase: 'Pico Máx' });
+  // Bajada (espejo de subida)
+  for (let i = n - 2; i >= 0; i--) {
+    const pct = (i / (n - 1)) * 100;
+    puntos.push({
+      pct,
+      nominal_ma: 4 + (pct / 100) * 16,
+      fase: 'Bajada',
+    });
+  }
+
+  return puntos;
+}
+
+/** Los 9 puntos canónicos (N=5, para backward compat). */
+export const PUNTOS = buildPuntos(5);
+
+/** Cantidades válidas de puntos "canónicos" que el técnico puede elegir. */
+export const PUNTOS_N_OPTIONS = [
+  { value: 2, label: '2 puntos (3 filas)' },
+  { value: 3, label: '3 puntos (5 filas)' },
+  { value: 4, label: '4 puntos (7 filas)' },
+  { value: 5, label: '5 puntos (9 filas) — completo' },
 ];
 
 /**
