@@ -62,6 +62,8 @@ const INITIAL_FORM = {
   // Sprint 42:
   puntos_n:                5,       // N puntos canónicos (2..5). Default 5.
   performed_at:            '',      // fecha de calibración (YYYY-MM-DD)
+  // Sprint 44: tolerancia editable global (aplica a todos los puntos)
+  tolerance_pct:           0.5,
 };
 
 export default function CalibrationModal() {
@@ -107,11 +109,12 @@ export default function CalibrationModal() {
       setPosition(p);
       setForm({
         ...INITIAL_FORM,
-        sap_wo:       p.sap_open_wo || '',
-        sensor_type:  p.sensor_type || 'Temperatura',
-        range_min:    p.range_min ?? '',
-        range_max:    p.range_max ?? '',
-        performed_at: todayIso(),   // Sprint 42: auto-fill fecha de hoy
+        sap_wo:        p.sap_open_wo || '',
+        sensor_type:   p.sensor_type || 'Temperatura',
+        range_min:     p.range_min ?? '',
+        range_max:     p.range_max ?? '',
+        performed_at:  todayIso(),   // Sprint 42
+        tolerance_pct: p.tolerance_pct ?? 0.5,   // Sprint 44: seed con la de la POS
         unit:         p.unit || '',
       });
       setGrid({ points: [], globalResult: 'PENDING' });
@@ -219,7 +222,7 @@ export default function CalibrationModal() {
       range_min:       Number(form.range_min),
       range_max:       Number(form.range_max),
       unit:            form.unit || null,
-      tolerance_pct:   position.tolerance_pct ?? 0.5,
+      tolerance_pct:   Number(form.tolerance_pct) || 0.5,   // Sprint 44: editable
       observations:    form.observations || null,
       supervisor_name:      supervisor.name,
       supervisor_signature: supervisor.signature, // puede ser null para Roberto/Dubla
@@ -256,7 +259,7 @@ export default function CalibrationModal() {
           signature: supervisor.signature,
         },
         performedAt: new Date().toISOString(),
-        tolerance: position.tolerance_pct ?? 0.5,
+        tolerance: Number(form.tolerance_pct) || 0.5,   // Sprint 44: usa la del form
       });
     } catch (pdfError) {
       console.error('[CalibrationModal] PDF generation failed:', pdfError);
@@ -268,7 +271,8 @@ export default function CalibrationModal() {
     router.refresh();
   }
 
-  const tolerance = position.tolerance_pct ?? 0.5;
+  // Sprint 44: tolerancia editable en el form (aplica a todos los puntos)
+  const tolerance = Number(form.tolerance_pct) || 0.5;
 
   return (
     <div
@@ -538,8 +542,8 @@ export default function CalibrationModal() {
             </div>
           </div>
 
-          {/* Sprint 42: Selector de N puntos + fecha de la calibración */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-xl border border-neutral-200 bg-gradient-to-br from-neutral-50 to-white p-4">
+          {/* Sprint 42/44: Selector de N puntos + fecha + tolerancia editable */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 rounded-xl border border-neutral-200 bg-gradient-to-br from-neutral-50 to-white p-4">
             <div>
               <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-600 mb-1">
                 Cantidad de puntos <span className="text-brand-fail">*</span>
@@ -574,6 +578,29 @@ export default function CalibrationModal() {
               />
               <div className="mt-1.5 text-[10.5px] text-neutral-500">
                 Auto-llenado con la fecha actual. Editable si la calibración fue otro día.
+              </div>
+            </div>
+
+            {/* Sprint 44: tolerancia editable — aplica a los N puntos */}
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-600 mb-1">
+                Tolerancia (%) <span className="text-brand-fail">*</span>
+              </label>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0.1"
+                  max="20"
+                  value={form.tolerance_pct}
+                  onChange={(e) => setField('tolerance_pct', e.target.value)}
+                  disabled={!canSign}
+                  className="w-full bg-white border-2 border-neutral-300 rounded-lg px-3 py-2.5 text-[13px] font-semibold focus:ring-4 focus:ring-brand-amber/30 focus:border-brand-amber outline-none disabled:bg-neutral-100"
+                />
+                <span className="text-[13px] font-bold text-neutral-500 shrink-0">±%</span>
+              </div>
+              <div className="mt-1.5 text-[10.5px] text-neutral-500">
+                Se aplica a los {form.puntos_n === 2 ? 3 : form.puntos_n === 3 ? 5 : form.puntos_n === 4 ? 7 : 9} puntos.
               </div>
             </div>
           </div>

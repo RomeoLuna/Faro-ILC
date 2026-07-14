@@ -59,8 +59,13 @@ export async function saveCalibrationEvent(payload) {
   if (!payload?.position_id) {
     return { ok: false, error: 'Falta position_id.' };
   }
-  if (!Array.isArray(payload.points) || payload.points.length !== 9) {
-    return { ok: false, error: 'Se esperan exactamente 9 puntos de calibración.' };
+  // Sprint 44: aceptamos 3/5/7/9 filas según puntos_n (2..5) del modal.
+  const validRowCounts = [3, 5, 7, 9];
+  if (!Array.isArray(payload.points) || !validRowCounts.includes(payload.points.length)) {
+    return {
+      ok: false,
+      error: `Cantidad de puntos inválida (${payload.points?.length ?? 0}). Esperado: 3, 5, 7 o 9.`,
+    };
   }
   if (payload.range_min == null || payload.range_max == null) {
     return { ok: false, error: 'Faltan rango mín/máx del instrumento.' };

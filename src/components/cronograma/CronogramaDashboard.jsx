@@ -13,8 +13,8 @@
 //     "En progreso" no existe en el snapshot porque ya cerró el mes.
 // =========================================================================
 
-import { useMemo } from 'react';
-import { computeKpis, partitionForDashboard, formatDate } from '@/lib/cronograma';
+import { useMemo, useState } from 'react';
+import { computeKpis, partitionForDashboard, formatDate, parseLocalDate } from '@/lib/cronograma';
 
 const MES_LARGO = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
 
@@ -30,6 +30,22 @@ function formatMonthLabel(yearMonth) {
 export default function CronogramaDashboard({ rows, isHistorical, historicalKpis, selectedMonth }) {
   const today = new Date();
   const monthLabel = formatMonthLabel(isHistorical ? selectedMonth : 'current');
+
+  // Sprint 44: toggle backlog on/off (solo aplica en modo live).
+  //   true  → incluye OTs arrastradas de meses anteriores sin notificar
+  //   false → solo OTs cuyo scheduled_date cae en el mes evaluado
+  const [includeBacklog, setIncludeBacklog] = useState(true);
+
+  // Filtrar backlog si el usuario lo desactivó
+  const displayRows = useMemo(() => {
+    if (isHistorical || includeBacklog) return rows;
+    // Modo live sin backlog: solo OTs con scheduled_date >= inicio del mes
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    return rows.filter((r) => {
+      const d = parseLocalDate(r.scheduled_date);
+      return d && d >= monthStart;
+    });
+  }, [rows, includeBacklog, isHistorical]);
 
   // ── KPIs: live computados, histórico viene pre-calculado ─────────────
   const kpis = useMemo(() => {
@@ -50,8 +66,8 @@ export default function CronogramaDashboard({ rows, isHistorical, historicalKpis
         enProgreso:   0,
       };
     }
-    return computeKpis(rows, today);
-  }, [isHistorical, historicalKpis, rows]);
+    return computeKpis(displayRows, today);
+  }, [isHistorical, historicalKpis, displayRows]);
 
   // ── Particiones para los buckets ──────────────────────────────────────
   const parts = useMemo(() => {
@@ -60,8 +76,8 @@ export default function CronogramaDashboard({ rows, isHistorical, historicalKpis
       const vencidas  = rows.filter((r) => r.estado_al_cierre_del_mes === 'ROJO');
       return { cumplidas, enProgreso: [], vencidas };
     }
-    return partitionForDashboard(rows, today);
-  }, [isHistorical, rows]);
+    return partitionForDashboard(displayRows, today);
+  }, [isHistorical, displayRows, rows]);
 
   return (
     <div className="bg-white rounded-xl border border-neutral-200 shadow-card overflow-hidden">
@@ -74,8 +90,38 @@ export default function CronogramaDashboard({ rows, isHistorical, historicalKpis
           <div className="text-[10.5px] text-neutral-500 mt-0.5">
             {isHistorical
               ? `Snapshot congelado de ${monthLabel} — datos auditables, no editables.`
-              : `Evalúa OTs planificadas para ${monthLabel} (incluye arrastradas sin notificar).`}
+              : includeBacklog
+                ? `Evalúa OTs planificadas para ${monthLabel} + arrastradas sin notificar.`
+                : `Evalúa solo OTs planificadas para ${monthLabel}.`}
           </div>
+
+          {/* Sprint 44: Toggle backlog (solo en modo live) */}
+          {!isHistorical && (
+            <div className="mt-2 inline-flex items-center rounded-lg border border-neutral-300 bg-white overflow-hidden text-[11px] font-semibold">
+              <button
+                type="button"
+                onClick={() => setIncludeBacklog(false)}
+                className={`px-3 py-1.5 transition ${
+                  !includeBacklog
+                    ? 'bg-brand-ink text-brand-amber'
+                    : 'text-neutral-600 hover:bg-neutral-50'
+                }`}
+              >
+                Solo del mes
+              </button>
+              <button
+                type="button"
+                onClick={() => setIncludeBacklog(true)}
+                className={`px-3 py-1.5 transition border-l border-neutral-300 ${
+                  includeBacklog
+                    ? 'bg-brand-ink text-brand-amber'
+                    : 'text-neutral-600 hover:bg-neutral-50'
+                }`}
+              >
+                Mes + backlog
+              </button>
+            </div>
+          )}
         </div>
 
         {kpis.compliance != null && (
