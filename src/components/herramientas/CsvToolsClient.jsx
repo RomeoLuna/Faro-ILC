@@ -15,6 +15,21 @@ import { useState } from 'react';
 import { parseCsv, cleanIsoDate } from '@/lib/sapSync';
 
 // ─── Helpers CSV ────────────────────────────────────────────────────────
+
+// Sprint 45b: SAP exporta 2 columnas con el mismo nombre (ej. "Denominación").
+// Pandas al leer las renombra automáticamente a "Denominación", "Denominación.1",
+// etc. Nuestro parser JS no lo hace por defecto — replicamos esa lógica acá
+// para que el CSV exportado tenga los mismos headers que espera el sync SAP.
+function dedupeHeaders(headers) {
+  const seen = new Map();      // header → cantidad de veces visto
+  return headers.map((h) => {
+    const raw = (h || '').trim();
+    const n = seen.get(raw) || 0;
+    seen.set(raw, n + 1);
+    return n === 0 ? raw : `${raw}.${n}`;
+  });
+}
+
 function escapeCell(v) {
   if (v == null) return '';
   const s = String(v);
@@ -112,7 +127,10 @@ function PurgadorIW37N() {
 
     try {
       const text = await file.text();
-      const { headers, rows } = parseCsv(text);
+      const parsed = parseCsv(text);
+      // Sprint 45b: renombrar duplicados como hace pandas ("X" → "X.1")
+      const headers = dedupeHeaders(parsed.headers);
+      const rows = parsed.rows;
       if (rows.length === 0) throw new Error('El CSV no contiene filas.');
 
       // Verificar columnas requeridas
@@ -318,24 +336,26 @@ function FusionIP24() {
     setPhase('processing');
 
     try {
-      // 1) Leer main
+      // 1) Leer main (Sprint 45b: dedupe headers como pandas)
       const mainText = await mainFile.text();
-      const parsedMain = parseCsv(mainText);
-      if (!parsedMain.headers.includes('Orden')) {
+      const parsedMainRaw = parseCsv(mainText);
+      const mainHeaders = dedupeHeaders(parsedMainRaw.headers);
+      if (!mainHeaders.includes('Orden')) {
         throw new Error('El CSV principal no tiene la columna "Orden".');
       }
-      const mainObjs = rowsToObjects(parsedMain.headers, parsedMain.rows);
+      const mainObjs = rowsToObjects(mainHeaders, parsedMainRaw.rows);
 
       // 2) Leer IP24
       const ip24Text = await ip24File.text();
-      const parsedIp24 = parseCsv(ip24Text);
+      const parsedIp24Raw = parseCsv(ip24Text);
+      const ip24Headers = dedupeHeaders(parsedIp24Raw.headers);
       for (const col of ['Orden', 'Fe.planif.', 'Fecha de cierre']) {
-        if (!parsedIp24.headers.includes(col)) {
+        if (!ip24Headers.includes(col)) {
           throw new Error(`El CSV IP24 no tiene la columna "${col}".`);
         }
       }
 
-      const ip24Objs = rowsToObjects(parsedIp24.headers, parsedIp24.rows);
+      const ip24Objs = rowsToObjects(ip24Headers, parsedIp24Raw.rows);
 
       // 3) Dedupe IP24 por Orden (nos quedamos con la primera aparición)
       const ip24ByOrden = new Map();
@@ -363,8 +383,8 @@ function FusionIP24() {
         };
       });
 
-      // 5) Headers finales: los del main + los 2 nuevos (si no estaban)
-      const finalHeaders = [...parsedMain.headers];
+      // 5) Headers finales: los del main (ya deduplicados) + los 2 nuevos
+      const finalHeaders = [...mainHeaders];
       if (!finalHeaders.includes('Fe.planif.'))       finalHeaders.push('Fe.planif.');
       if (!finalHeaders.includes('Fecha de cierre'))  finalHeaders.push('Fecha de cierre');
 
