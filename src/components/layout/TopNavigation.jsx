@@ -23,6 +23,7 @@ const TITLES = {
   '/ingenieria/tendencias': { title: 'Tendencias por Sensor',              sub: 'Análisis histórico de deriva por POS MTTO',   kind: 'eng' },
   '/certificados':          { title: 'Certificados',                       sub: 'Repositorio compartido',                      kind: 'shared' },
   '/catalogos':             { title: 'Catálogo de Patrones',               sub: 'Fluke, Pozo Seco, etc.',                      kind: 'shared' },
+  '/herramientas':          { title: 'Herramientas CSV',                   sub: 'Purga y cruce local de SAP',                  kind: 'shared' },
 };
 
 function pillFor(kind) {

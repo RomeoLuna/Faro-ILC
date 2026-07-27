@@ -27,7 +27,7 @@ import { useUser } from '@/components/auth/UserProvider';
 const NAV = {
   envasado: [
     { href: '/envasado',            label: 'Faro Envasado',     badge: { text: '86', tone: 'env' } },
-    { href: '/envasado/backlog',    label: 'Backlog Envasado', badge: { text: '4',  tone: 'fail' } },
+    { href: '/envasado/backlog',    label: 'Backlog y Alertas', badge: { text: '4',  tone: 'fail' } },
     { href: '/envasado/cronograma', label: 'Cronograma', badge: { text: 'NEW', tone: 'amber' } },
   ],
   ingenieria: [
@@ -45,6 +45,7 @@ const NAV = {
 const SHARED = [
   { href: '/certificados', label: 'Certificados' },
   { href: '/catalogos',    label: 'Catálogo de Patrones' },
+  { href: '/herramientas', label: 'Herramientas CSV' },
 ];
 
 function badgeClass(tone) {
