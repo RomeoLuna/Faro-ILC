@@ -33,7 +33,8 @@ import PositionsTableClient from './PositionsTableClient';
 
 export default function FaroDashboardClient({ positions, section }) {
   // Sprint 17 — lifted state del período
-  const [period, setPeriod] = useState('current');
+  // Sprint 49: default cambia de 'current' → 'all' porque eliminamos "Mes Actual"
+  const [period, setPeriod] = useState('all');
 
   // Sprint 37 — pre-filtro por período: positions → periodFiltered → tabla
   const periodFiltered = useMemo(() => {

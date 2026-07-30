@@ -9,9 +9,13 @@
 //
 // PERIODS
 //   'previous' → mes anterior calendario
-//   'current'  → mes corriente
 //   'next'     → mes próximo
-//   'all'      → sin filtro (todo el horizonte SAP)
+//   'all'      → sin filtro (todo el horizonte SAP) — default
+//
+// Sprint 49: se eliminó 'Mes Actual' porque el balance de ejecutadas/no
+// ejecutadas del mes corriente nunca cuadraba con la operación (las OTs
+// en progreso del día caían inconsistentes). Preferimos evaluar el mes
+// anterior (ya cerrado y auditable) o el próximo (planificación).
 //
 // API:
 //   PERIODS                  array { value, label } para los <select>
@@ -22,10 +26,9 @@
 // =========================================================================
 
 export const PERIODS = [
-  { value: 'previous', label: 'Mes Anterior' },
-  { value: 'current',  label: 'Mes Actual' },
-  { value: 'next',     label: 'Próximo Mes' },
   { value: 'all',      label: 'Todos los meses' },
+  { value: 'previous', label: 'Mes Anterior' },
+  { value: 'next',     label: 'Próximo Mes' },
 ];
 
 // Convierte 'YYYY-MM-DD' a Date local (sin drift por timezone).

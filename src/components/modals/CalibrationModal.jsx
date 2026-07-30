@@ -29,7 +29,7 @@ import { useUser, useCanSignCalibration } from '@/components/auth/UserProvider';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import CalibrationGrid from './CalibrationGrid';
 import { saveCalibrationEvent } from './actions';
-import { SUPERVISORS, getSupervisorById } from '@/lib/supervisors';
+import { SUPERVISORS as HARDCODED_SUPERVISORS, getSupervisorById as getHardcodedSupervisorById } from '@/lib/supervisors';
 import { SENSOR_TYPES, getUnitsForSensor } from '@/lib/sensors';
 import { generateAndDownloadCertificate, roleLabel } from '@/lib/pdf-download';
 
@@ -81,10 +81,20 @@ export default function CalibrationModal() {
   const [patrones, setPatrones]           = useState([]);
   const [patronesLoading, setPatronesLoading] = useState(false);
 
+  // Sprint 54: supervisores desde BD — fetch al abrir el modal.
+  // Fallback al hardcoded si el fetch falla.
+  const [supervisorsDB, setSupervisorsDB] = useState(HARDCODED_SUPERVISORS);
+
   const canSign     = useCanSignCalibration();
   const { profile } = useUser() || {};
 
-  const supervisor   = getSupervisorById(form.supervisor_id);
+  // Lookup del supervisor seleccionado — busca primero en la BD, cae al hardcoded
+  const supervisor = useMemo(() => {
+    if (!form.supervisor_id) return null;
+    const fromDB = supervisorsDB.find((s) => s.id === form.supervisor_id);
+    if (fromDB) return fromDB;
+    return getHardcodedSupervisorById(form.supervisor_id);
+  }, [form.supervisor_id, supervisorsDB]);
   const unidadesValidas = useMemo(() => getUnitsForSensor(form.sensor_type), [form.sensor_type]);
 
   // Patrón actualmente seleccionado del catálogo (null si es 'otro' o vacío)
@@ -145,6 +155,28 @@ export default function CalibrationModal() {
         setPatrones(data || []);
       }
       setPatronesLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [open]);
+
+  // Sprint 54: fetch de supervisores desde BD al abrir el modal
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    (async () => {
+      const supabase = createSupabaseBrowserClient();
+      const { data, error: err } = await supabase
+        .from('supervisores')
+        .select('id, slug, name, role, signature')
+        .eq('active', true)
+        .order('name', { ascending: true });
+      if (cancelled) return;
+      if (err || !data || data.length === 0) {
+        // Fallback al hardcoded si la BD no responde o está vacía
+        setSupervisorsDB(HARDCODED_SUPERVISORS);
+      } else {
+        setSupervisorsDB(data);
+      }
     })();
     return () => { cancelled = true; };
   }, [open]);
@@ -649,7 +681,7 @@ export default function CalibrationModal() {
                 className="w-full border-2 border-neutral-300 rounded-lg px-3 py-2.5 text-[13.5px] font-semibold focus:ring-4 focus:ring-brand-amber/30 focus:border-brand-amber outline-none cursor-pointer bg-white disabled:bg-neutral-100"
               >
                 <option value="">— Seleccionar supervisor —</option>
-                {SUPERVISORS.map((s) => (
+                {supervisorsDB.map((s) => (
                   <option key={s.id} value={s.id}>{s.name}</option>
                 ))}
               </select>

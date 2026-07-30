@@ -327,6 +327,8 @@ export async function saveExternalCalibration(formData) {
 
   // ── 2) Extraer y validar campos ─────────────────────────────────────────
   const positionId      = (formData.get('position_id')          || '').toString();
+  // AGREGAR después de la línea `const positionId = ...`
+  const sapWo = (formData.get('sap_wo') || '').toString().trim();
   const posMtto         = (formData.get('pos_mtto')             || '').toString();
   const provider        = (formData.get('external_provider')    || '').toString().trim();
   const certNumber      = (formData.get('external_cert_number') || '').toString().trim();
@@ -335,6 +337,7 @@ export async function saveExternalCalibration(formData) {
   const file            = formData.get('pdf_file');
 
   if (!positionId)  return { ok: false, error: 'Falta position_id.' };
+  if (!sapWo) return { ok: false, error: 'La OT SAP es obligatoria para vincular el certificado.' };
   if (!provider)    return { ok: false, error: 'Indica el proveedor que emitió el certificado.' };
   if (!performedAt) return { ok: false, error: 'Indica la fecha de calibración.' };
 
@@ -416,23 +419,18 @@ export async function saveExternalCalibration(formData) {
   const { data: event, error: insertError } = await supabase
     .from('calibration_events')
     .insert({
-      position_id:           positionId,
-      source:                'external',
-      result:                'PASS',
-      performed_at:          new Date(performedAt).toISOString(),
-      // Sprint 32: Tras eliminar auth (Sprint 21), session.user.id es el
-      // string 'public-operator' del MOCK_OPERATOR — Supabase rechaza eso
-      // porque la columna es uuid references auth.users(id). El schema
-      // permite NULL ("on delete set null"), así que lo dejamos NULL.
-      // La trazabilidad del operador que cargó el cert externo no se
-      // captura por ahora (el provider del cert ya es la firma legal).
-      performed_by:          null,
-      external_provider:     provider,
-      external_cert_number:  certNumber || null,
-      external_cert_pdf_url: publicUrl,            // null si solo URL
-      certificate_url:       certificateUrl || null, // Sprint 28
-      observations,
-    })
+  position_id:           positionId,
+  source:                'external',
+  sap_wo:                sapWo,         // Sprint 53: obligatorio para trazabilidad
+  result:                'PASS',
+  performed_at:          new Date(performedAt).toISOString(),
+  performed_by:          null,
+  external_provider:     provider,
+  external_cert_number:  certNumber || null,
+  external_cert_pdf_url: publicUrl,
+  certificate_url:       certificateUrl || null,
+  observations,
+})
     .select('id')
     .single();
 
