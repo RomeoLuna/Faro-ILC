@@ -1,33 +1,28 @@
 // lib/sapSync.js
 // =========================================================================
-// SAP CSV PARSER + VALIDADOR — Sprint 39 (fix serial Excel + IP24)
+// SAP CSV PARSER + VALIDADOR — Sprint 27 (fix dates + Fe.planif + Fecha cierre)
 // -------------------------------------------------------------------------
-// CAMBIOS vs. Sprint 27:
-//   1) cleanIsoDate ahora acepta CUATRO formatos:
+// CAMBIOS vs. Sprint 25:
+//   1) cleanIsoDate ahora acepta TRES formatos:
 //        • YYYY-MM-DD          (ISO estricto — backward compat)
-//        • MM/DD/YY o MM/DD/YYYY (US — SAP en producción)
+//        • MM/DD/YY o MM/DD/YYYY (US — formato observado en producción)
 //        • DD/MM/YY o DD/MM/YYYY (EU — heurística de disambiguación)
-//        • N serial Excel      (Sprint 39, IP24 cruzado exporta así)
-//                              Ej: 46267 → 2026-09-02
-//                                  45917 → 2025-09-17
 //      Auto-detecta cuál es M y cuál es D usando límites de mes:
 //        • Si primer número > 12 → es día → D/M
 //        • Si segundo número > 12 → es día → M/D
 //        • Si ambos ≤ 12 (ambiguo) → asume M/D (default SAP US)
 //      Año de 2 dígitos se expande a 20XX.
-//      Números enteros entre 20000 y 60000 se interpretan como serial Excel.
 //
-//   2) Mapeo COLUMN_MAP con dos campos del cruce IP24:
+//   2) Mapeo COLUMN_MAP extendido con dos campos del cruce IP24:
 //        • Fe.planif.      → fe_planif      (fecha planificada IP24)
 //        • Fecha de cierre → fecha_cierre   (fecha real de cierre IP24)
 //      Son OPCIONALES (no rompen si el CSV viene sin ellas — backward
 //      compat con plantas que aún no hicieron el cruce IP24).
 //
 // IMPACTO:
-//   Tras este fix + re-sync del CSV cruzado, las OTs cerradas con CTEC NOTI
-//   van a poblar correctamente fecha_cierre (incluso desde serial Excel),
-//   y la regla del faro (Sprint 26b) las reconocerá como la última cierre
-//   real en ÚLTIMA(SAP).
+//   Tras este fix + re-sync del CSV, las OTs cerradas con CTEC NOTI van
+//   a poblar correctamente fecha_cierre, y la regla del faro (Sprint 26b)
+//   las reconocerá como la última cierre real en ÚLTIMA(SAP).
 // =========================================================================
 
 export const CHUNK_SIZE = 500;
@@ -72,7 +67,10 @@ export const COLUMN_MAP = {
 };
 
 // ─── Mini-parser CSV (RFC 4180 simplificado) ────────────────────────────
-export function parseCsv(text) {
+// Sprint 45c: acepta un separador opcional (default coma). SAP puede
+// exportar con ";" (formato europeo) o "," (US) — el caller detecta
+// cuál viene y lo pasa.
+export function parseCsv(text, separator = ',') {
   const norm = text.replace(/\r\n?/g, '\n').replace(/\n+$/, '');
   const rawLines = norm.split('\n');
   if (rawLines.length === 0) return { headers: [], rows: [] };
@@ -90,7 +88,7 @@ export function parseCsv(text) {
         cur += c; i++;
       } else {
         if (c === '"') { inQuotes = true; i++; continue; }
-        if (c === ',') { fields.push(cur); cur = ''; i++; continue; }
+        if (c === separator) { fields.push(cur); cur = ''; i++; continue; }
         cur += c; i++;
       }
     }
@@ -101,6 +99,23 @@ export function parseCsv(text) {
   const headers = parseLine(rawLines[0]).map((h) => h.trim());
   const rows    = rawLines.slice(1).map(parseLine);
   return { headers, rows };
+}
+
+// Sprint 45c: auto-detección del separador. Cuenta ocurrencias de "," vs ";"
+// en la primera línea (ignora las que están dentro de comillas).
+// Devuelve el que más aparece; empate va a "," (default).
+export function detectSeparator(text) {
+  const firstLine = text.replace(/^﻿/, '').split(/\r?\n/, 1)[0] || '';
+  let commas = 0, semis = 0;
+  let inQuotes = false;
+  for (let i = 0; i < firstLine.length; i++) {
+    const c = firstLine[i];
+    if (c === '"') { inQuotes = !inQuotes; continue; }
+    if (inQuotes) continue;
+    if (c === ',') commas++;
+    else if (c === ';') semis++;
+  }
+  return semis > commas ? ';' : ',';
 }
 
 // ─── Validadores de tipo ────────────────────────────────────────────────
@@ -119,7 +134,7 @@ export function cleanText(v) {
 //   1) YYYY-MM-DD              (ISO estricto)
 //   2) M/D/YY[YY] o D/M/YY[YY] (SAP US o EU con slashes)
 //   3) N serial Excel          (número de días desde 1900-01-01)
-//                              Ej: 46267 = 2026-09-02
+//                              Ej: 46267 = 2026-09-11
 //                              Aparece en CSVs cruzados con IP24
 //   4) cualquier otro → null (no fallar, solo no parsear)
 export function cleanIsoDate(v) {
