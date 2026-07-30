@@ -1,28 +1,29 @@
 // lib/sapSync.js
 // =========================================================================
-// SAP CSV PARSER + VALIDADOR — Sprint 27 (fix dates + Fe.planif + Fecha cierre)
+// SAP CSV PARSER + VALIDADOR — Sprint 55 (detección de formato a NIVEL ARCHIVO)
 // -------------------------------------------------------------------------
-// CAMBIOS vs. Sprint 25:
-//   1) cleanIsoDate ahora acepta TRES formatos:
-//        • YYYY-MM-DD          (ISO estricto — backward compat)
-//        • MM/DD/YY o MM/DD/YYYY (US — formato observado en producción)
-//        • DD/MM/YY o DD/MM/YYYY (EU — heurística de disambiguación)
-//      Auto-detecta cuál es M y cuál es D usando límites de mes:
-//        • Si primer número > 12 → es día → D/M
-//        • Si segundo número > 12 → es día → M/D
-//        • Si ambos ≤ 12 (ambiguo) → asume M/D (default SAP US)
-//      Año de 2 dígitos se expande a 20XX.
+// FIX Sprint 55:
+//   El parser de fecha antes decidía EU vs US fila-a-fila. Con fechas
+//   ambiguas (día 1..12) elegía mal la mitad del archivo y las OTs se
+//   "reabrían" con mes y día invertidos (bug reportado en cargas de
+//   compañeros que exportan el CSV en formato EU dd/mm/yyyy vs el
+//   default US mm/dd/yyyy del planner original).
 //
-//   2) Mapeo COLUMN_MAP extendido con dos campos del cruce IP24:
-//        • Fe.planif.      → fe_planif      (fecha planificada IP24)
-//        • Fecha de cierre → fecha_cierre   (fecha real de cierre IP24)
-//      Son OPCIONALES (no rompen si el CSV viene sin ellas — backward
-//      compat con plantas que aún no hicieron el cruce IP24).
+//   AHORA: antes de parsear las filas, se escanean TODAS las fechas y
+//   se detecta si el archivo es EU o US con evidencia fuerte:
+//     • Al menos una fecha con primer número > 12 → archivo es EU
+//     • Al menos una fecha con segundo número > 12 → archivo es US
+//   Si hay evidencia mixta (poco probable) gana el que tenga más votos.
+//   Si no hay evidencia (todas las fechas ambiguas), default US.
 //
-// IMPACTO:
-//   Tras este fix + re-sync del CSV, las OTs cerradas con CTEC NOTI van
-//   a poblar correctamente fecha_cierre, y la regla del faro (Sprint 26b)
-//   las reconocerá como la última cierre real en ÚLTIMA(SAP).
+//   Ese formato detectado se pasa como hint a cleanIsoDate para TODAS
+//   las filas del archivo, eliminando el bug de días 1..12.
+//
+// CAMBIOS vs. Sprint 27:
+//   1) Nueva función detectDateFormat(rows, headers) → 'EU' | 'US'
+//   2) cleanIsoDate acepta 2do parámetro opcional dateFormatHint
+//   3) validateAndMap detecta el formato ANTES de iterar filas
+//   4) Retorno de validateAndMap incluye dateFormat detectado (para UI)
 // =========================================================================
 
 export const CHUNK_SIZE = 500;
@@ -130,14 +131,19 @@ export function cleanText(v) {
   return s === '' ? null : s;
 }
 
-// Sprint 39: parser robusto que acepta 4 formatos de entrada:
+// Sprint 55: parser robusto que acepta 4 formatos de entrada:
 //   1) YYYY-MM-DD              (ISO estricto)
 //   2) M/D/YY[YY] o D/M/YY[YY] (SAP US o EU con slashes)
 //   3) N serial Excel          (número de días desde 1900-01-01)
 //                              Ej: 46267 = 2026-09-11
 //                              Aparece en CSVs cruzados con IP24
 //   4) cualquier otro → null (no fallar, solo no parsear)
-export function cleanIsoDate(v) {
+//
+// Segundo parámetro (Sprint 55): dateFormatHint = 'US' | 'EU'
+//   Se usa SOLO cuando la fecha es ambigua (ambos números ≤ 12).
+//   Si el archivo fue analizado con detectDateFormat, el hint viene
+//   determinado por el archivo completo y no por la fila.
+export function cleanIsoDate(v, dateFormatHint = 'US') {
   const s = cleanText(v);
   if (!s) return null;
 
@@ -159,14 +165,18 @@ export function cleanIsoDate(v) {
 
     let month, day;
     if (a > 12 && b <= 12) {
-      // Primer número > 12 → es día → formato D/M
+      // Primer número > 12 → es día → formato D/M (EU forzado por evidencia)
       day = a; month = b;
     } else if (b > 12 && a <= 12) {
-      // Segundo número > 12 → es día → formato M/D
+      // Segundo número > 12 → es día → formato M/D (US forzado por evidencia)
       month = a; day = b;
     } else if (a <= 12 && b <= 12) {
-      // Ambiguo (ambos válidos) → asumir M/D (default SAP US)
-      month = a; day = b;
+      // Ambiguo → respetar el hint del archivo (Sprint 55)
+      if (dateFormatHint === 'EU') {
+        day = a; month = b;
+      } else {
+        month = a; day = b;
+      }
     } else {
       // Ambos > 12 → fecha inválida
       return null;
@@ -204,6 +214,44 @@ export function cleanIsoDate(v) {
   return null;
 }
 
+// ─── Detección de formato de fecha a NIVEL ARCHIVO (Sprint 55) ─────────
+// Escanea TODAS las celdas de fecha del CSV y decide si el archivo es EU
+// (dd/mm/yyyy) o US (mm/dd/yyyy) con evidencia dura:
+//   • Primer número > 12 → tiene que ser día → cuenta como voto EU
+//   • Segundo número > 12 → tiene que ser día → cuenta como voto US
+//   • Ambos ≤ 12 → ambiguo, no aporta evidencia
+//
+// El formato ganador se aplica a TODAS las filas del archivo — así se
+// elimina el bug donde una misma carga tenía la mitad de fechas bien
+// y la otra mitad invertidas (día 1..12 quedaba mal interpretado).
+export function detectDateFormat(rows, dateColumnIndices) {
+  const idxs = Array.isArray(dateColumnIndices) ? dateColumnIndices : [dateColumnIndices];
+  let euVotes = 0;
+  let usVotes = 0;
+
+  for (const cells of rows) {
+    if (!Array.isArray(cells)) continue;
+    for (const idx of idxs) {
+      if (idx == null || idx < 0) continue;
+      const raw = cells[idx];
+      if (!raw) continue;
+      const s = String(raw).trim();
+      const m = s.match(/^(\d{1,2})\/(\d{1,2})\/\d{2,4}$/);
+      if (!m) continue;
+      const a = Number(m[1]);
+      const b = Number(m[2]);
+      if (a > 12 && b <= 12) euVotes++;
+      else if (b > 12 && a <= 12) usVotes++;
+      // ambos ≤ 12 → ambiguo, no cuenta
+      // ambos > 12 → dato basura, no cuenta
+    }
+  }
+
+  if (euVotes > usVotes) return 'EU';
+  if (usVotes > euVotes) return 'US';
+  return 'US'; // empate o sin evidencia → default US (histórico)
+}
+
 // ─── Validación + mapeo del set completo ────────────────────────────────
 export function validateAndMap(rows, headers) {
   const idx = {};
@@ -226,6 +274,15 @@ export function validateAndMap(rows, headers) {
     if (i !== -1) idx[col] = i;
   }
 
+  // 3) Sprint 55: detectar formato de fecha analizando TODAS las columnas
+  //    de fecha del CSV completo (planned_date, fe_planif, fecha_cierre).
+  const dateColIdxs = [
+    idx[COLUMN_MAP.planned_date],
+    idx[COLUMN_MAP.fe_planif],
+    idx[COLUMN_MAP.fecha_cierre],
+  ].filter((i) => i !== undefined);
+  const dateFormat = detectDateFormat(rows, dateColIdxs);
+
   const valid = [];
   const skipped_reasons = [];
 
@@ -242,16 +299,16 @@ export function validateAndMap(rows, headers) {
 
     const pos_mtto     = cleanText  (cells[idx[COLUMN_MAP.pos_mtto]]);
     const wo_number    = cleanText  (cells[idx[COLUMN_MAP.wo_number]]);
-    const planned_date = cleanIsoDate(cells[idx[COLUMN_MAP.planned_date]]);
+    const planned_date = cleanIsoDate(cells[idx[COLUMN_MAP.planned_date]], dateFormat);
     const status       = cleanText  (cells[idx[COLUMN_MAP.status]]);
     const short_text   = cleanText  (cells[idx[COLUMN_MAP.short_text]]);
 
     // Opcionales — solo si la columna existe en el CSV
     const fe_planif    = idx[COLUMN_MAP.fe_planif] !== undefined
-      ? cleanIsoDate(cells[idx[COLUMN_MAP.fe_planif]])
+      ? cleanIsoDate(cells[idx[COLUMN_MAP.fe_planif]], dateFormat)
       : null;
     const fecha_cierre = idx[COLUMN_MAP.fecha_cierre] !== undefined
-      ? cleanIsoDate(cells[idx[COLUMN_MAP.fecha_cierre]])
+      ? cleanIsoDate(cells[idx[COLUMN_MAP.fecha_cierre]], dateFormat)
       : null;
 
     if (!pos_mtto || !wo_number) {
@@ -273,7 +330,8 @@ export function validateAndMap(rows, headers) {
     });
   });
 
-  return { valid, skipped_reasons };
+  // Sprint 55: exportar el formato detectado para que la UI lo muestre
+  return { valid, skipped_reasons, dateFormat };
 }
 
 // ─── Dedup por wo_number (último gana) ──────────────────────────────────
