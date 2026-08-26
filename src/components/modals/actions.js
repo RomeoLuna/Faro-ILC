@@ -165,6 +165,7 @@ export async function saveCalibrationEvent(payload) {
   revalidatePath('/envasado');
   revalidatePath('/ingenieria');
   revalidatePath('/calidad');
+  revalidatePath('/certificados'); // Corrección: antes faltaba, la pestaña "Sin certificado" no se actualizaba
 
   return { ok: true, event_id: eventId };
 }
@@ -447,6 +448,7 @@ export async function saveExternalCalibration(formData) {
   revalidatePath('/envasado');
   revalidatePath('/ingenieria');
   revalidatePath('/calidad');
+  revalidatePath('/certificados'); // Corrección: antes faltaba, la pestaña "Sin certificado" no se actualizaba
 
   return {
     ok: true,

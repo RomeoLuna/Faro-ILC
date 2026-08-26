@@ -192,7 +192,11 @@ export default async function CertificadosPage() {
         </div>
       </div>
 
-      <CertificadosClient rows={rows} kpis={{ total, conCert, sinCert, coverage }} cutoff={CUTOFF} />
+      <CertificadosClient
+        rows={rows}
+        kpis={{ total, conCert, sinCert, coverage }}
+        cutoff={CUTOFF}
+      />
     </section>
   );
 }

@@ -19,6 +19,7 @@ import CalibrationModal from '@/components/modals/CalibrationModal';
 import HistoryModal from '@/components/modals/HistoryModal';
 import ExternalCertModal from '@/components/modals/ExternalCertModal';
 import InfoModal from '@/components/modals/InfoModal';
+import Toast from '@/components/layout/Toast';
 
 export default function AppLayout({ children }) {
   return (
@@ -31,6 +32,9 @@ export default function AppLayout({ children }) {
       <HistoryModal />
       <ExternalCertModal />
       <InfoModal />
+
+      {/* Corrección: confirmación visual al guardar certificados */}
+      <Toast />
     </PinGateProvider>
   );
 }

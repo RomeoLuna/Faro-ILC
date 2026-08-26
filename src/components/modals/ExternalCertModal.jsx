@@ -134,6 +134,9 @@ export default function ExternalCertModal() {
       return;
     }
     setOpen(false);
+    window.dispatchEvent(new CustomEvent('toast:success', {
+      detail: { message: 'Certificado guardado — actualizando lista de certificados…' },
+    }));
     router.refresh();
   }
 

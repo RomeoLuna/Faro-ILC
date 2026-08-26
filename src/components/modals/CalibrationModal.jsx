@@ -71,6 +71,7 @@ export default function CalibrationModal() {
 
   const [open, setOpen]                   = useState(false);
   const [position, setPosition]           = useState(null);
+  const [standalone, setStandalone]       = useState(false); // Corrección: modo "certificado independiente"
   const [form, setForm]                   = useState(INITIAL_FORM);
   const [grid, setGrid]                   = useState({ points: [], globalResult: 'PENDING' });
   const [saving, setSaving]               = useState(false);
@@ -116,6 +117,7 @@ export default function CalibrationModal() {
   useEffect(() => {
     function handler(e) {
       const p = e.detail;
+      setStandalone(false);
       setPosition(p);
       setForm({
         ...INITIAL_FORM,
@@ -133,6 +135,33 @@ export default function CalibrationModal() {
     }
     window.addEventListener('open:calibration', handler);
     return () => window.removeEventListener('open:calibration', handler);
+  }, []);
+
+  // Corrección: "Generar certificado" independiente — mismo formulario,
+  // pero sin ligar a ninguna POS existente y sin guardar nada en Supabase.
+  // Solo produce el PDF descargable.
+  useEffect(() => {
+    function handler() {
+      setStandalone(true);
+      setPosition({
+        id: null,
+        pos_mtto: '',
+        equipment_name: '',
+        description: '',
+        area_name: '',
+        maintenance_plan: '—',
+        sap_open_wo: '',
+      });
+      setForm({
+        ...INITIAL_FORM,
+        performed_at: todayIso(),
+      });
+      setGrid({ points: [], globalResult: 'PENDING' });
+      setError(null);
+      setOpen(true);
+    }
+    window.addEventListener('open:calibration-standalone', handler);
+    return () => window.removeEventListener('open:calibration-standalone', handler);
   }, []);
 
   // Sprint 35: fetch de patrones cada vez que se abre el modal
@@ -187,6 +216,11 @@ export default function CalibrationModal() {
     setForm((prev) => ({ ...prev, [k]: v }));
   }
 
+  // Corrección: en modo independiente, POS/Equipo/Área son editables a mano
+  function setPositionField(k, v) {
+    setPosition((prev) => ({ ...prev, [k]: v }));
+  }
+
   // Sprint 29: al cambiar de sensor, si la unidad actual ya no aplica → reset
   function setSensorType(newSensor) {
     setForm((prev) => {
@@ -201,6 +235,10 @@ export default function CalibrationModal() {
     setError(null);
 
     // ── Validaciones pre-submit ───────────────────────────────────────────
+    if (standalone && !position.equipment_name?.trim()) {
+      setError('Ingresa el nombre del equipo para el certificado.');
+      return;
+    }
     if (!form.sensor_type) {
       setError('Selecciona el tipo de sensor.');
       return;
@@ -238,6 +276,43 @@ export default function CalibrationModal() {
     } else if (patronCatalogo) {
       patternUsedFinal = patronCatalogo.nombre;
       patternCertUrlFinal = patronCatalogo.certificate_url;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // Corrección: modo independiente — NO se guarda nada en Supabase.
+    // Solo se genera y descarga el PDF con los datos escritos a mano.
+    // ═══════════════════════════════════════════════════════════════════
+    if (standalone) {
+      setGeneratingPdf(true);
+      try {
+        await generateAndDownloadCertificate({
+          position,
+          form,
+          grid,
+          technician: {
+            name: form.technician_name.trim(),
+            role: 'Técnico de Mantenimiento',
+          },
+          supervisor: {
+            name: supervisor.name,
+            role: supervisor.role,
+            signature: supervisor.signature,
+          },
+          performedAt: new Date().toISOString(),
+          tolerance: Number(form.tolerance_pct) || 0.5,
+        });
+      } catch (pdfError) {
+        console.error('[CalibrationModal] PDF generation failed (standalone):', pdfError);
+        setError('No se pudo generar el PDF. Intenta de nuevo.');
+        setGeneratingPdf(false);
+        return;
+      }
+      setGeneratingPdf(false);
+      setOpen(false);
+      window.dispatchEvent(new CustomEvent('toast:success', {
+        detail: { message: 'PDF generado y descargado. No se guardó en el sistema.' },
+      }));
+      return; // ← no saveCalibrationEvent, no router.refresh()
     }
 
     // ── Payload para el server action ─────────────────────────────────────
@@ -300,6 +375,9 @@ export default function CalibrationModal() {
     }
 
     setOpen(false);
+    window.dispatchEvent(new CustomEvent('toast:success', {
+      detail: { message: 'Certificado guardado — actualizando lista de certificados…' },
+    }));
     router.refresh();
   }
 
@@ -319,15 +397,19 @@ export default function CalibrationModal() {
         {/* Header */}
         <div className="px-6 py-4 border-b border-neutral-200 flex items-start justify-between">
           <div>
-            <span className="px-2 py-0.5 rounded-md bg-brand-ink text-brand-amber text-[10.5px] font-bold uppercase tracking-wider">
-              Calibración interna
+            <span className={`px-2 py-0.5 rounded-md text-[10.5px] font-bold uppercase tracking-wider ${
+              standalone ? 'bg-brand-amberSoft text-amber-700' : 'bg-brand-ink text-brand-amber'
+            }`}>
+              {standalone ? 'Certificado independiente' : 'Calibración interna'}
             </span>
             <div className="text-[18px] font-bold mt-1">
-              CALIBRACIÓN DE {form.sensor_type.toUpperCase()} — {position.equipment_name}
+              CALIBRACIÓN DE {form.sensor_type.toUpperCase()}{position.equipment_name ? ` — ${position.equipment_name}` : ''}
             </div>
-            <div className="text-[12.5px] text-neutral-500">
-              POS <span className="font-mono">{position.pos_mtto}</span> · {position.description || 'Sin descripción'}
-            </div>
+            {!standalone && (
+              <div className="text-[12.5px] text-neutral-500">
+                POS <span className="font-mono">{position.pos_mtto}</span> · {position.description || 'Sin descripción'}
+              </div>
+            )}
           </div>
           <button
             onClick={() => setOpen(false)}
@@ -354,12 +436,42 @@ export default function CalibrationModal() {
             </div>
           )}
 
-          {/* POS (read-only) */}
+          {/* Corrección: aviso de modo independiente */}
+          {standalone && (
+            <div className="flex gap-3 p-3.5 rounded-lg bg-brand-amberSoft border-l-4 border-brand-amber">
+              <svg className="w-5 h-5 mt-0.5 text-amber-700 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+              <div className="text-[12.5px] text-amber-900 leading-snug">
+                <strong>Certificado independiente:</strong> completa los datos del equipo a mano. Al generarlo,
+                se descarga el PDF directamente — <strong>no queda guardado</strong> en el historial ni en la
+                pantalla de Certificados.
+              </div>
+            </div>
+          )}
+
+          {/* POS — editable si es independiente, solo lectura si viene de una POS real */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <ReadField label="POS MTTO"  value={position.pos_mtto} mono />
-            <ReadField label="Área"      value={position.area_name || '—'} />
-            <ReadField label="Plan MTTO" value={position.maintenance_plan || '—'} />
+            {standalone ? (
+              <>
+                <InputField label="POS MTTO (opcional)" value={position.pos_mtto}
+                  onChange={(v) => setPositionField('pos_mtto', v)} placeholder="Ej. Sin POS" disabled={!canSign} />
+                <InputField label="Equipo *" value={position.equipment_name}
+                  onChange={(v) => setPositionField('equipment_name', v)} placeholder="Nombre del equipo" disabled={!canSign} />
+                <InputField label="Área (opcional)" value={position.area_name}
+                  onChange={(v) => setPositionField('area_name', v)} placeholder="Ej. Envasado" disabled={!canSign} />
+              </>
+            ) : (
+              <>
+                <ReadField label="POS MTTO"  value={position.pos_mtto} mono />
+                <ReadField label="Área"      value={position.area_name || '—'} />
+                <ReadField label="Plan MTTO" value={position.maintenance_plan || '—'} />
+              </>
+            )}
           </div>
+
 
           {/* Selector de tipo de sensor (pestañas) — Sprint 29 */}
           <div>
@@ -735,7 +847,7 @@ export default function CalibrationModal() {
                 <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <path d="M20 6L9 17l-5-5" />
                 </svg>
-                {saving ? 'Guardando…' : generatingPdf ? 'Generando PDF…' : 'Guardar y descargar PDF'}
+                {generatingPdf ? 'Generando PDF…' : saving ? 'Guardando…' : standalone ? 'Generar y descargar PDF' : 'Guardar y descargar PDF'}
               </button>
             )}
           </div>

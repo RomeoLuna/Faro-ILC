@@ -43,7 +43,7 @@ function sectionTone(s) {
 }
 
 
-export default function CertificadosClient({ rows, kpis, cutoff }) {
+export default function CertificadosClient({ rows, kpis, cutoff, allPositions = [] }) {
   const [tab, setTab]           = useState('pendientes');
   const [query, setQuery]       = useState('');
   const [areaFilter, setArea]   = useState('');
@@ -82,6 +82,21 @@ export default function CertificadosClient({ rows, kpis, cutoff }) {
 
   return (
     <>
+      {/* ─── Corrección: botón directo, sin buscador intermedio ─────────── */}
+      <div className="flex justify-end mb-4">
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new CustomEvent('open:calibration-standalone'))}
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg bg-brand-amber text-black text-[13px] font-bold hover:bg-brand-amberHover transition"
+        >
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          Generar certificado
+        </button>
+      </div>
+
       {/* ─── KPIs ────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
         <KpiCard
