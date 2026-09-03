@@ -25,7 +25,7 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { parseCsv, detectSeparator, cleanIsoDate, validateAndMap, dedupeByWoNumber, CHUNK_SIZE } from '@/lib/sapSync';
+import { parseCsv, detectSeparator, cleanIsoDate, detectDateFormat, validateAndMap, dedupeByWoNumber, CHUNK_SIZE } from '@/lib/sapSync';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
 // ─── Helpers CSV ────────────────────────────────────────────────────────
@@ -167,6 +167,14 @@ function PurgadorIW37N({ onPurgadoOk, onReset }) {
       const fechaIdx  = headers.indexOf('Fe.inic.extrema');
       const statusIdx = headers.indexOf('Status sistema');
 
+      // FIX: sin esto, cleanIsoDate() asumía MM/DD (US) por defecto para
+      // fechas ambiguas (día y mes ambos ≤12, ej. 01/09/2026), cuando el
+      // IW37N de SAP siempre viene en DD/MM (EU). Eso hacía que el purgado
+      // eligiera mal las "últimas 2 órdenes" por posición, descartando
+      // órdenes recientes reales (ej. día 1-12 del mes) y dejando
+      // posiciones "vencidas" en el Faro con datos viejos indefinidamente.
+      const dateFormat = detectDateFormat(rows, [fechaIdx]);
+
       const byPos = new Map();
       for (const r of rows) {
         const pos = (r[posIdx] || '').trim();
@@ -179,7 +187,7 @@ function PurgadorIW37N({ onPurgadoOk, onReset }) {
       for (const [, group] of byPos) {
         const withDates = group.map((r) => ({
           row: r,
-          iso: cleanIsoDate(r[fechaIdx]) || '0000-00-00',
+          iso: cleanIsoDate(r[fechaIdx], dateFormat) || '0000-00-00',
         }));
         withDates.sort((a, b) => b.iso.localeCompare(a.iso));
 
@@ -203,8 +211,8 @@ function PurgadorIW37N({ onPurgadoOk, onReset }) {
       purgedRows.sort((a, b) => {
         const posCmp = String(a[posIdx] || '').localeCompare(String(b[posIdx] || ''));
         if (posCmp !== 0) return posCmp;
-        const dA = cleanIsoDate(a[fechaIdx]) || '0000-00-00';
-        const dB = cleanIsoDate(b[fechaIdx]) || '0000-00-00';
+        const dA = cleanIsoDate(a[fechaIdx], dateFormat) || '0000-00-00';
+        const dB = cleanIsoDate(b[fechaIdx], dateFormat) || '0000-00-00';
         return dB.localeCompare(dA);
       });
 
