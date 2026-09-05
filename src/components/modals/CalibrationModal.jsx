@@ -287,7 +287,16 @@ export default function CalibrationModal() {
       try {
         await generateAndDownloadCertificate({
           position,
-          form,
+          // FIX: CertificatePDF lee form.pattern_used, pero ese campo nunca
+          // existió en el estado del form (el form solo tiene
+          // patron_selection_id / patron_custom_nombre). patternUsedFinal
+          // ya resuelve el nombre correcto (catálogo u "Otro") más arriba —
+          // solo faltaba pasarlo al PDF con el nombre de campo que espera.
+          form: {
+            ...form,
+            pattern_used: patternUsedFinal,
+            pattern_certificate_url: patternCertUrlFinal,
+          },
           grid,
           technician: {
             name: form.technician_name.trim(),
@@ -354,7 +363,13 @@ export default function CalibrationModal() {
     try {
       await generateAndDownloadCertificate({
         position,
-        form,
+        // FIX: mismo problema que en el modo standalone — sin esto, el PDF
+        // recién guardado también salía con "Patrón usado: —".
+        form: {
+          ...form,
+          pattern_used: patternUsedFinal,
+          pattern_certificate_url: patternCertUrlFinal,
+        },
         grid,
         technician: {
           name: form.technician_name.trim(),
