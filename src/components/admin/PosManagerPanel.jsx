@@ -14,7 +14,22 @@
 
 import { useMemo, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { addPos, softDeletePos } from '@/app/(app)/admin/posActions';
+import { addPos, softDeletePos, updatePosFrequency } from '@/app/(app)/admin/posActions';
+
+// Detección automática de frecuencia a partir del texto de la tarea, ej.
+// "VERIF SENSORES TEMPERATURA TCC #24 (1A)" → 12 meses.
+// Patrones soportados: (NA) = N años → N*12 meses; (NM) = N meses.
+// Es solo una SUGERENCIA inicial — el valor guardado por el usuario en
+// Administración siempre manda (frequency_source = 'custom').
+function suggestFrequencyMonths(text) {
+  if (!text) return null;
+  const m = String(text).match(/\((\d+)\s*([AM])\)/i);
+  if (!m) return null;
+  const n = Number(m[1]);
+  const unit = m[2].toUpperCase();
+  if (!Number.isFinite(n) || n < 1) return null;
+  return unit === 'A' ? n * 12 : n;
+}
 
 const EMPTY_FORM = {
   pos_mtto:          '',
@@ -35,10 +50,27 @@ export default function PosManagerPanel({ initialPositions }) {
   const [error, setError]         = useState(null);
   const [ok, setOk]               = useState(null);
   const [form, setForm]           = useState(EMPTY_FORM);
+  const [freqSource, setFreqSource] = useState('custom'); // 'auto' | 'custom' — para el form de alta
   const [isPending, startTransition] = useTransition();
 
+  const suggestedFreq = useMemo(
+    () => suggestFrequencyMonths(`${form.equipment_name} ${form.description}`),
+    [form.equipment_name, form.description]
+  );
+
   function setField(k, v) {
-    setForm((prev) => ({ ...prev, [k]: v }));
+    setForm((prev) => {
+      const next = { ...prev, [k]: v };
+      // Al cambiar el equipo/descripción, si el usuario aún no tocó la
+      // frecuencia a mano, autocompleta con la sugerencia y la marca
+      // como 'auto'. En cuanto el usuario edite frequency_months
+      // directamente, pasa a 'custom' (ver el onChange del campo).
+      if ((k === 'equipment_name' || k === 'description') && freqSource === 'auto') {
+        const suggestion = suggestFrequencyMonths(`${next.equipment_name} ${next.description}`);
+        next.frequency_months = suggestion != null ? String(suggestion) : '';
+      }
+      return next;
+    });
   }
 
   function askPassword(action) {
@@ -71,7 +103,7 @@ export default function PosManagerPanel({ initialPositions }) {
     if (!password) return;
 
     startTransition(async () => {
-      const res = await addPos({ ...form, password });
+      const res = await addPos({ ...form, frequency_source: freqSource, password });
       if (!res.ok) { setError(res.error); return; }
 
       setPositions((prev) => {
@@ -88,6 +120,7 @@ export default function PosManagerPanel({ initialPositions }) {
       }
       setOk(msg);
       setForm(EMPTY_FORM);
+      setFreqSource('auto');
       setShowAdd(false);
       router.refresh();
     });
@@ -109,6 +142,54 @@ export default function PosManagerPanel({ initialPositions }) {
       if (!res.ok) { setError(res.error); return; }
       setPositions((prev) => prev.filter((x) => x.id !== p.id));
       setOk(`POS ${p.pos_mtto} eliminada.`);
+      router.refresh();
+    });
+  }
+
+  // ── Edición en línea de frecuencia (Administración de frecuencias) ────
+  const [editingFreqId, setEditingFreqId] = useState(null);
+  const [editingFreqValue, setEditingFreqValue] = useState('');
+
+  function startEditFreq(p) {
+    setError(null); setOk(null);
+    setEditingFreqId(p.id);
+    setEditingFreqValue(p.frequency_months != null ? String(p.frequency_months) : '');
+  }
+
+  function cancelEditFreq() {
+    setEditingFreqId(null);
+    setEditingFreqValue('');
+  }
+
+  async function saveEditFreq(p) {
+    const freqNum = Number(editingFreqValue);
+    if (!Number.isFinite(freqNum) || freqNum < 1) {
+      setError('Frecuencia en meses debe ser un número ≥ 1.');
+      return;
+    }
+    const suggestion = suggestFrequencyMonths(`${p.equipment_name} ${p.description}`);
+    // Si el valor guardado coincide con la sugerencia automática Y la POS
+    // nunca había sido editada a mano, se mantiene como 'auto'. Cualquier
+    // cambio manual, coincida o no con la sugerencia, queda 'custom' —
+    // así se refleja que alguien lo revisó y decidió a propósito.
+    const nextSource = (p.frequency_source === 'auto' && suggestion === freqNum) ? 'auto' : 'custom';
+
+    const password = askPassword('EDITAR la frecuencia de');
+    if (!password) return;
+
+    startTransition(async () => {
+      const res = await updatePosFrequency({
+        id: p.id,
+        frequency_months: freqNum,
+        frequency_source: nextSource,
+        password,
+      });
+      if (!res.ok) { setError(res.error); return; }
+      setPositions((prev) =>
+        prev.map((x) => (x.id === p.id ? { ...x, frequency_months: freqNum, frequency_source: nextSource } : x))
+      );
+      setOk(`Frecuencia de ${p.pos_mtto} actualizada a ${freqNum}M.`);
+      cancelEditFreq();
       router.refresh();
     });
   }
@@ -147,7 +228,7 @@ export default function PosManagerPanel({ initialPositions }) {
             PIN-gated
           </span>
           <button
-            onClick={() => { setShowAdd((v) => !v); setError(null); setOk(null); }}
+            onClick={() => { setShowAdd((v) => !v); setError(null); setOk(null); setFreqSource('auto'); }}
             className="px-3 py-1.5 rounded-lg bg-brand-amber text-black text-[12.5px] font-bold hover:bg-brand-amberHover inline-flex items-center gap-1.5"
           >
             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
@@ -243,10 +324,27 @@ export default function PosManagerPanel({ initialPositions }) {
                   min="1"
                   step="1"
                   value={form.frequency_months}
-                  onChange={(e) => setField('frequency_months', e.target.value)}
+                  onChange={(e) => {
+                    setFreqSource('custom'); // el usuario la tocó a mano
+                    setField('frequency_months', e.target.value);
+                  }}
                   placeholder="12"
                   className={inputCls}
                 />
+                <div className="mt-1 text-[10.5px]">
+                  {freqSource === 'auto' && suggestedFreq != null ? (
+                    <span className="text-brand-amber font-semibold">
+                      Sugerida automáticamente desde el texto de la tarea ({suggestedFreq}M)
+                    </span>
+                  ) : (
+                    <span className="text-neutral-400">
+                      Personalizada
+                      {suggestedFreq != null && suggestedFreq !== Number(form.frequency_months) && (
+                        <> — la sugerencia automática sería {suggestedFreq}M</>
+                      )}
+                    </span>
+                  )}
+                </div>
               </Field>
               <div className="hidden md:block" />
             </div>
@@ -262,7 +360,7 @@ export default function PosManagerPanel({ initialPositions }) {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => { setForm(EMPTY_FORM); setShowAdd(false); }}
+                  onClick={() => { setForm(EMPTY_FORM); setFreqSource('auto'); setShowAdd(false); }}
                   className="px-3 py-2 rounded-lg border border-neutral-300 text-[12.5px] font-semibold hover:bg-neutral-100"
                 >
                   Cancelar
@@ -360,7 +458,59 @@ export default function PosManagerPanel({ initialPositions }) {
                     {p.sub_area && <div className="text-[11px] text-neutral-500">{p.sub_area}</div>}
                   </td>
                   <td className="px-3 py-2.5 text-neutral-700">
-                    {p.frequency_months != null ? `${p.frequency_months}M` : '—'}
+                    {editingFreqId === p.id ? (
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          autoFocus
+                          value={editingFreqValue}
+                          onChange={(e) => setEditingFreqValue(e.target.value)}
+                          className="w-16 border-2 border-brand-amber rounded-md px-1.5 py-0.5 text-[12.5px] outline-none"
+                        />
+                        <button
+                          onClick={() => saveEditFreq(p)}
+                          disabled={isPending}
+                          title="Guardar"
+                          className="text-brand-pass font-bold text-[13px] px-1 disabled:opacity-60"
+                        >
+                          ✓
+                        </button>
+                        <button
+                          onClick={cancelEditFreq}
+                          disabled={isPending}
+                          title="Cancelar"
+                          className="text-neutral-400 font-bold text-[13px] px-1 disabled:opacity-60"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => startEditFreq(p)}
+                        className="group inline-flex items-center gap-1.5 hover:underline decoration-dashed underline-offset-2"
+                        title="Click para editar la frecuencia"
+                      >
+                        <span>{p.frequency_months != null ? `${p.frequency_months}M` : '—'}</span>
+                        {p.frequency_months != null && (
+                          <span
+                            className={`px-1.5 py-[1px] rounded text-[9px] font-bold uppercase tracking-wide ${
+                              p.frequency_source === 'auto'
+                                ? 'bg-brand-amber/15 text-brand-amber'
+                                : 'bg-neutral-200 text-neutral-600'
+                            }`}
+                            title={
+                              p.frequency_source === 'auto'
+                                ? 'Sugerida automáticamente desde el texto de la tarea'
+                                : 'Personalizada — guardada a mano en Administración'
+                            }
+                          >
+                            {p.frequency_source === 'auto' ? 'auto' : 'manual'}
+                          </span>
+                        )}
+                      </button>
+                    )}
                   </td>
                   <td className="px-3 py-2.5 text-right">
                     <button

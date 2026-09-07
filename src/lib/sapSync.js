@@ -143,6 +143,61 @@ export function cleanText(v) {
 //   Se usa SOLO cuando la fecha es ambigua (ambos números ≤ 12).
 //   Si el archivo fue analizado con detectDateFormat, el hint viene
 //   determinado por el archivo completo y no por la fila.
+// Sprint 55: parser robusto que acepta varios formatos de entrada:
+//   1) YYYY-MM-DD              (ISO estricto)
+//   2) M/D/YY[YY] o D/M/YY[YY] (SAP US o EU con slashes)
+//   3) D-M-YY[YY] o M-D-YY[YY] (mismo caso con guión en vez de slash)
+//   4) D.M.YY[YY]              (separador punto, común en exportes europeos)
+//   5) Nombre de mes en texto, español o inglés: "15-Mar-2026",
+//      "15 de marzo de 2026", "March 15, 2026" (sin ambigüedad: el
+//      nombre del mes ya dice cuál número es el día)
+//   6) N serial Excel          (número de días desde 1900-01-01)
+//                              Ej: 46267 = 2026-09-11
+//                              Aparece en CSVs cruzados con IP24
+//   7) cualquier otro → null (no fallar, solo no parsear)
+//
+// Segundo parámetro (Sprint 55): dateFormatHint = 'US' | 'EU'
+//   Se usa SOLO cuando la fecha es numérica y ambigua (ambos números ≤ 12).
+//   Si el archivo fue analizado con detectDateFormat, el hint viene
+//   determinado por el archivo completo y no por la fila.
+
+const MONTH_NAMES = {
+  // español (con y sin acento, completo y abreviado)
+  ene: 1, enero: 1,
+  feb: 2, febrero: 2,
+  mar: 3, marzo: 3,
+  abr: 4, abril: 4,
+  may: 5, mayo: 5,
+  jun: 6, junio: 6,
+  jul: 7, julio: 7,
+  ago: 8, agosto: 8,
+  sep: 9, set: 9, sept: 9, septiembre: 9, setiembre: 9,
+  oct: 10, octubre: 10,
+  nov: 11, noviembre: 11,
+  dic: 12, diciembre: 12,
+  // inglés
+  jan: 1, january: 1,
+  // feb/february ya cubierto por 'feb' arriba
+  february: 2,
+  march: 3,
+  april: 4,
+  june: 6,
+  july: 7,
+  aug: 8, august: 8,
+  september: 9,
+  october: 10,
+  november: 11,
+  dec2: 12, december: 12,
+};
+
+function monthNameToNumber(raw) {
+  const key = raw
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // quita acentos: "MARZO" / "MARZO"
+    .replace(/\.$/, ''); // "sep." → "sep"
+  return MONTH_NAMES[key] || null;
+}
+
 export function cleanIsoDate(v, dateFormatHint = 'US') {
   const s = cleanText(v);
   if (!s) return null;
@@ -153,12 +208,12 @@ export function cleanIsoDate(v, dateFormatHint = 'US') {
     return isNaN(d.getTime()) ? null : s;
   }
 
-  // ── Formato 2: con slashes M/D/YY[YY] o D/M/YY[YY] ────────────────────
-  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
-  if (m) {
-    const a = Number(m[1]);
-    const b = Number(m[2]);
-    let year = Number(m[3]);
+  // ── Formato 2/3/4: numérico con /, - o . como separador ───────────────
+  const mNum = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if (mNum) {
+    const a = Number(mNum[1]);
+    const b = Number(mNum[2]);
+    let year = Number(mNum[3]);
 
     // Expandir año de 2 dígitos: 00..99 → 2000..2099
     if (year < 100) year += 2000;
@@ -190,7 +245,37 @@ export function cleanIsoDate(v, dateFormatHint = 'US') {
     return isNaN(d.getTime()) ? null : iso;
   }
 
-  // ── Formato 3: Excel serial number (Sprint 39) ────────────────────────
+  // ── Formato 5: nombre de mes en texto (ES/EN) — sin ambigüedad ────────
+  // Acepta "15-Mar-2026", "15 de marzo de 2026", "15 marzo 2026",
+  // "March 15, 2026", "Mar 15 2026".
+  let mName = s.match(/^(\d{1,2})[\s\-]+de\s+([a-záéíóúñ]+)\s+de\s+(\d{2,4})$/i); // "15 de marzo de 2026"
+  if (!mName) mName = s.match(/^(\d{1,2})[\s\-]+([a-záéíóúñ]+)\.?[\s\-,]+(\d{2,4})$/i); // "15-Mar-2026" / "15 marzo 2026"
+  if (mName) {
+    const day = Number(mName[1]);
+    const month = monthNameToNumber(mName[2]);
+    let year = Number(mName[3]);
+    if (year < 100) year += 2000;
+    if (month && day >= 1 && day <= 31) {
+      const iso = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const d = new Date(iso + 'T00:00:00Z');
+      return isNaN(d.getTime()) ? null : iso;
+    }
+  }
+  // "March 15, 2026" / "Mar 15 2026" (mes primero)
+  const mNameFirst = s.match(/^([a-záéíóúñ]+)\.?[\s\-]+(\d{1,2}),?[\s\-]+(\d{2,4})$/i);
+  if (mNameFirst) {
+    const month = monthNameToNumber(mNameFirst[1]);
+    const day = Number(mNameFirst[2]);
+    let year = Number(mNameFirst[3]);
+    if (year < 100) year += 2000;
+    if (month && day >= 1 && day <= 31) {
+      const iso = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const d = new Date(iso + 'T00:00:00Z');
+      return isNaN(d.getTime()) ? null : iso;
+    }
+  }
+
+  // ── Formato 6: Excel serial number (Sprint 39) ────────────────────────
   // Excel guarda fechas como número de días desde 1900-01-01.
   // Conversión a Unix ms: (serial - 25569) * 86400000
   //   • 25569 = días entre 1900-01-01 y 1970-01-01
@@ -236,7 +321,11 @@ export function detectDateFormat(rows, dateColumnIndices) {
       const raw = cells[idx];
       if (!raw) continue;
       const s = String(raw).trim();
-      const m = s.match(/^(\d{1,2})\/(\d{1,2})\/\d{2,4}$/);
+      // Sprint (fechas con más formatos): evidencia dura también con
+      // guión o punto como separador, no solo "/". Las fechas con
+      // nombre de mes (Sprint fechas) no entran aquí porque ya no son
+      // ambiguas — cleanIsoDate las resuelve directo sin necesitar hint.
+      const m = s.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.]\d{2,4}$/);
       if (!m) continue;
       const a = Number(m[1]);
       const b = Number(m[2]);

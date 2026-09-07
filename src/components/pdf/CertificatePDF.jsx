@@ -218,6 +218,9 @@ export default function CertificatePDF({
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Bloque 1 · Instrumento</Text>
           <View style={styles.sectionBody}>
+            {/* FIX: "Orden de Trabajo (SAP)" solo existía chiquito en el
+                encabezado (form.sap_wo); no había un Field visible acá. */}
+            <Field label="Orden de Trabajo (SAP)" value={form.sap_wo || '—'} mono />
             <View style={styles.twoCol}>
               <View style={styles.col}>
                 <Field label="POS MTTO"    value={position.pos_mtto} mono />
@@ -243,6 +246,10 @@ export default function CertificatePDF({
             <View style={styles.twoCol}>
               <View style={styles.col}>
                 <Field label="Patrón usado" value={form.pattern_used || '—'} />
+                {/* FIX: "Certificado de Patrón (N°)" nunca se agregó a la
+                    plantilla del PDF, aunque el formulario sí lo captura
+                    (y hasta lo autocompleta desde el catálogo). */}
+                <Field label="Certificado de Patrón (N°)" value={form.pattern_cert_id || '—'} mono />
               </View>
               <View style={styles.colSpacer} />
               <View style={styles.col}>
@@ -252,6 +259,7 @@ export default function CertificatePDF({
             </View>
           </View>
         </View>
+
 
         {/* BLOQUE 3: TABLA DE 9 PUNTOS */}
         <View style={styles.section}>

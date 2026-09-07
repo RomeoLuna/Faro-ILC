@@ -44,7 +44,7 @@ export default async function AdminPage() {
   // Sprint 50: fetch de POS activas — expone errores para diagnóstico
   const { data: positions, error: posErr } = await supabase
     .from('maintenance_positions')
-    .select('id, pos_mtto, equipment_name, description, ubicacion_tecnica, area, sub_area, tag, frequency_months, active')
+    .select('id, pos_mtto, equipment_name, description, ubicacion_tecnica, area, sub_area, tag, frequency_months, frequency_source, active')
     .eq('active', true)
     .order('pos_mtto', { ascending: true });
 
