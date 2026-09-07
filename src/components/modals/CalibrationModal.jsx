@@ -43,6 +43,24 @@ function todayIso() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
+// FIX: el PDF (CertificatePDF.jsx) muestra fecha Y hora a partir de
+// `performedAt`. Antes se mandaba siempre `new Date().toISOString()`
+// (el momento exacto de generar el PDF), ignorando por completo lo que
+// el usuario haya elegido en el campo "Fecha de calibración" — ese
+// campo se guardaba bien en la base de datos, pero nunca llegaba al
+// certificado. Esta función toma la fecha elegida por el usuario
+// (form.performed_at, solo día) y le pega la hora actual, para que el
+// PDF muestre el día correcto sin perder una hora real en el sello.
+function performedAtIso(dateOnlyStr) {
+  const now = new Date();
+  if (!dateOnlyStr) return now.toISOString();
+  const [y, m, d] = dateOnlyStr.split('-').map(Number);
+  if (!y || !m || !d) return now.toISOString();
+  const combined = new Date(now);
+  combined.setFullYear(y, m - 1, d);
+  return combined.toISOString();
+}
+
 const INITIAL_FORM = {
   sap_wo:                  '',
   instrument_tag:          '',
@@ -307,7 +325,10 @@ export default function CalibrationModal() {
             role: supervisor.role,
             signature: supervisor.signature,
           },
-          performedAt: new Date().toISOString(),
+          // FIX: antes mandaba new Date().toISOString() (el momento exacto
+          // de generar el PDF), ignorando la fecha elegida en el campo
+          // "Fecha de calibración". Ahora usa esa fecha.
+          performedAt: performedAtIso(form.performed_at),
           tolerance: Number(form.tolerance_pct) || 0.5,
         });
       } catch (pdfError) {
@@ -380,7 +401,9 @@ export default function CalibrationModal() {
           role: supervisor.role,
           signature: supervisor.signature,
         },
-        performedAt: new Date().toISOString(),
+        // FIX: mismo problema que en el modo standalone — el PDF guardado
+        // también ignoraba la fecha elegida en "Fecha de calibración".
+        performedAt: performedAtIso(form.performed_at),
         tolerance: Number(form.tolerance_pct) || 0.5,   // Sprint 44: usa la del form
       });
     } catch (pdfError) {
