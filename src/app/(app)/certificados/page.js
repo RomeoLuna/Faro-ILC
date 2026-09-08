@@ -66,7 +66,16 @@ export default async function CertificadosPage() {
   }
 
   // 2a) Eventos con sap_wo (match estricto por OT)
-  const woList = (positions || []).map((p) => p.last_noti_wo).filter(Boolean);
+  // FIX: desde el fix de empates en la vista (v5), last_noti_wo puede venir
+  // como "9436384, 9440021" (varias OT empatadas en fecha) en vez de una
+  // sola. Antes esto se usaba tal cual en el .in() y en el .get() del Map,
+  // así que una posición con empate NUNCA encontraba su certificado ya
+  // guardado y quedaba marcada "Necesita certificado" por error. Ahora se
+  // separan las OT individuales antes de buscar y de hacer el match.
+  const splitWoList = (raw) => (raw || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const woList = Array.from(
+    new Set((positions || []).flatMap((p) => splitWoList(p.last_noti_wo)))
+  );
   let events = [];
   if (woList.length > 0) {
     const { data } = await supabase
@@ -82,6 +91,20 @@ export default async function CertificadosPage() {
     if (!prev || new Date(e.performed_at) > new Date(prev.performed_at)) {
       eventByWo.set(e.sap_wo, e);
     }
+  }
+
+  // Busca, entre TODAS las OT individuales de una posición (por si hay
+  // empate), la más reciente que ya tenga certificado.
+  function findEventForPosition(p) {
+    const wos = splitWoList(p.last_noti_wo);
+    let best = null;
+    for (const wo of wos) {
+      const ev = eventByWo.get(wo);
+      if (ev && (!best || new Date(ev.performed_at) > new Date(best.performed_at))) {
+        best = ev;
+      }
+    }
+    return best;
   }
 
   // 2b) Sprint 52c — Eventos EXTERNOS por position_id.
@@ -111,7 +134,7 @@ export default async function CertificadosPage() {
   // 3) Merge
   const rows = (positions || []).map((p) => {
     // Match preferente por WO exacto
-    let event = p.last_noti_wo ? eventByWo.get(p.last_noti_wo) : null;
+    let event = findEventForPosition(p);
 
     // Sprint 52c: si NO hubo match por WO, aceptamos un evento externo
     // reciente para esa POS como certificado cubriendo la NOTI actual.

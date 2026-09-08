@@ -58,6 +58,34 @@ export async function generateAndDownloadCertificate(data) {
 }
 
 /**
+ * Genera y descarga el PDF de una VERIFICACIÓN (elementos múltiples, sin
+ * grilla de 9 puntos). Mismo patrón que generateAndDownloadCertificate,
+ * pero apuntando a VerificationCertPDF.
+ */
+export async function generateAndDownloadVerification(data) {
+  const [{ pdf }, { default: VerificationCertPDF }] = await Promise.all([
+    import('@react-pdf/renderer'),
+    import('@/components/pdf/VerificationCertPDF'),
+  ]);
+
+  const doc  = <VerificationCertPDF {...data} />;
+  const blob = await pdf(doc).toBlob();
+
+  const dateIso  = new Date(data.performedAt).toISOString().split('T')[0];
+  const filename = `Verificacion_${data.position.pos_mtto}_${dateIso}.pdf`;
+
+  const url  = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href     = url;
+  link.download = filename;
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+/**
  * Infiere el modo de entrada ('mA' o 'fisico') a partir de los puntos.
  * Útil cuando reconstruimos el `form` desde un evento histórico de la BD,
  * porque no guardamos el modo explícitamente — sólo guardamos los campos

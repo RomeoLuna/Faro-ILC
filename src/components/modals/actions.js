@@ -458,3 +458,77 @@ export async function saveExternalCalibration(formData) {
     filename,
   };
 }
+
+
+// =========================================================================
+// saveVerification — Certificados de VERIFICACIÓN (Sprint nuevo)
+// -------------------------------------------------------------------------
+// Tercer tipo de certificado, junto a calibración interna y externo:
+// no mide UNA variable en 9 puntos, sino que confirma N ≥ 3 elementos
+// distintos del equipo, cada uno con su propio tipo de variable física y
+// unidad (pueden ser todas distintas entre sí).
+//
+// Insert directo a calibration_events (source='verification'), sin pasar
+// por el RPC de 9 puntos — no aplica aquí. Los elementos se guardan como
+// jsonb en la columna verification_elements (requiere la migración
+// add_verification_support.sql aplicada de antemano).
+// =========================================================================
+export async function saveVerification(payload) {
+  const session = await getCurrentUserWithProfile();
+  if (!session) return { ok: false, error: 'No autenticado.' };
+  if (!canSignCalibration(session.profile?.role)) {
+    return { ok: false, error: 'Tu rol no permite registrar verificaciones.' };
+  }
+
+  if (!payload.position_id) return { ok: false, error: 'Falta position_id.' };
+  if (!payload.supervisor_name || !payload.supervisor_signature) {
+    return { ok: false, error: 'Selecciona un supervisor con firma antes de guardar.' };
+  }
+  if (!payload.performed_at) {
+    return { ok: false, error: 'Falta la fecha de verificación.' };
+  }
+
+  const elements = Array.isArray(payload.elements) ? payload.elements : [];
+  const validElements = elements.filter(
+    (e) => e && e.nombre?.trim() && e.tipo && e.valor !== '' && e.valor != null
+  );
+  if (validElements.length < 3) {
+    return { ok: false, error: 'Se necesitan al menos 3 elementos verificados completos (nombre, tipo y valor).' };
+  }
+
+  const supabase = createSupabaseServerClient();
+
+  const { data: event, error: insertError } = await supabase
+    .from('calibration_events')
+    .insert({
+      position_id:           payload.position_id,
+      source:                'verification',
+      sap_wo:                payload.sap_wo || null,
+      result:                'PASS',
+      performed_at:          new Date(payload.performed_at).toISOString(),
+      performed_by:          null,
+      technician_name:       payload.technician_name || null,
+      supervisor_name:       payload.supervisor_name,
+      supervisor_role:       payload.supervisor_role || 'Supervisor',
+      supervisor_signature:  payload.supervisor_signature,
+      supervisor_id:         payload.supervisor_id || null,
+      observations:          payload.observations || null,
+      verification_elements: validElements,
+    })
+    .select('id')
+    .single();
+
+  if (insertError) {
+    console.error('[saveVerification] insert error:', insertError);
+    return { ok: false, error: insertError.message };
+  }
+
+  // Mismo bug que ya corregimos antes en saveExternalCalibration: sin esto,
+  // la tarjeta no desaparece de "Necesita certificado" en /certificados.
+  revalidatePath('/envasado');
+  revalidatePath('/ingenieria');
+  revalidatePath('/calidad');
+  revalidatePath('/certificados');
+
+  return { ok: true, event_id: event.id, elements: validElements };
+}
