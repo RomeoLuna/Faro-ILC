@@ -521,7 +521,12 @@ export async function saveVerification(payload) {
       performed_by:          null,
       technician_name:       payload.technician_name || null,
       supervisor_signature:  payload.supervisor_signature,
-      supervisor_id:         payload.supervisor_id || null,
+      // FIX: mismo límite ya documentado en saveCalibrationEvent — esta FK
+      // espera un id de auth.users, no de la tabla `supervisores` (que se
+      // agregó después sin terminar de conectar esa relación). Enviar el
+      // id real de `supervisores` viola "calibration_events_supervisor_id_fkey".
+      // Se deja en null a propósito, igual que hace Calibración interna.
+      supervisor_id:         null,
       observations:          observationsWithSupervisor,
       verification_elements: validElements,
     })
