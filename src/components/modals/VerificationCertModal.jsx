@@ -24,7 +24,7 @@ import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { saveVerification } from './actions';
 import { generateAndDownloadVerification } from '@/lib/pdf-download';
 
-const MIN_ELEMENTS = 3;
+const MIN_ELEMENTS = 1; // el usuario pidió que baste con al menos 1 elemento completo
 
 function todayIso() {
   const d = new Date();

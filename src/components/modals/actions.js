@@ -492,8 +492,8 @@ export async function saveVerification(payload) {
   const validElements = elements.filter(
     (e) => e && e.nombre?.trim() && e.tipo && e.valor !== '' && e.valor != null
   );
-  if (validElements.length < 3) {
-    return { ok: false, error: 'Se necesitan al menos 3 elementos verificados completos (nombre, tipo y valor).' };
+  if (validElements.length < 1) {
+    return { ok: false, error: 'Se necesita al menos 1 elemento verificado completo (nombre, tipo y valor).' };
   }
 
   const supabase = createSupabaseServerClient();

@@ -126,7 +126,19 @@ export default function ExternalCertModal() {
     if (file) fd.append('pdf_file', file);
 
     setSaving(true);
-    const res = await saveExternalCalibration(fd);
+    let res;
+    try {
+      res = await saveExternalCalibration(fd);
+    } catch (err) {
+      // FIX: sin este try/catch, cualquier fallo inesperado (ej. el límite
+      // de tamaño de Server Actions que corregimos en next.config.mjs)
+      // quedaba como una excepción sin capturar — no mostraba error, no
+      // guardaba, no cerraba el modal, y el botón se quedaba pegado.
+      console.error('[ExternalCertModal] error inesperado al guardar:', err);
+      setSaving(false);
+      setError('No se pudo guardar el certificado (posible archivo muy pesado o problema de conexión). Intenta de nuevo.');
+      return;
+    }
     setSaving(false);
 
     if (!res.ok) {
