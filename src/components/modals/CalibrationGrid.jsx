@@ -80,6 +80,17 @@ export default function CalibrationGrid({
     const hasRange =
       rangeMin !== '' && rangeMin != null &&
       rangeMax !== '' && rangeMax != null;
+    // FIX: rangeMin/rangeMax llegan como STRING desde el <input> del form
+    // (ej. "-11.2"). Más abajo se usan en `rangeMin + (...)` — el operador
+    // + entre string y número CONCATENA en vez de sumar en JavaScript, lo
+    // que producía valores imposibles como "-11.212.5" enviados al RPC de
+    // Supabase (que fallaba al intentar castearlos a numeric). Con rangos
+    // positivos simples el resultado concatenado a veces igual parseaba
+    // como número válido por casualidad — por eso solo se notó con
+    // negativos y decimales juntos. Se convierten a Number una sola vez
+    // aquí y se usan esas versiones en toda la aritmética de abajo.
+    const rMin = Number(rangeMin);
+    const rMax = Number(rangeMax);
 
     // Llamamos a calcularPunto para obtener {maComputed, errorPct, result}
     // Sprint 31: usar nominalMaDynamic (recalculado del pct editable)
@@ -115,7 +126,7 @@ export default function CalibrationGrid({
         col4Muted = false;
       } else if (hasRange) {
         // Sin input → mostrar entre paréntesis el físico esperado (igual que v4)
-        const vEsperado = rangeMin + (rangeMax - rangeMin) * (pctForCalc / 100);
+        const vEsperado = rMin + (rMax - rMin) * (pctForCalc / 100);
         col4Display = `(${Number(vEsperado).toFixed(2)} ${unit})`.trim();
         col4Muted = true;
       } else {
@@ -131,7 +142,7 @@ export default function CalibrationGrid({
       nominal_ma: nominalMaDynamic,       // Sprint 31: recalculado del pct
       // Datos crudos para el payload
       expected_value: hasRange
-        ? rangeMin + (rangeMax - rangeMin) * (pctForCalc / 100)
+        ? rMin + (rMax - rMin) * (pctForCalc / 100)
         : null,
       reading_ma:    modo === 'mA'     && reading !== '' ? Number(reading) : null,
       reading_value: modo === 'fisico' && reading !== '' ? Number(reading) : null,
