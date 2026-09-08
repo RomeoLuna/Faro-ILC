@@ -4,3 +4,11 @@
 
 [build.environment]
   NODE_VERSION = "18"
+
+# FIX: sin esto, Netlify usaba su detección automática de Next.js, que
+# puede quedar pegada a una versión vieja del runtime con un bug conocido
+# en Server Actions ("x-forwarded-host ... does not match origin ...
+# Aborting the action" -> 403 Forbidden). Se fija explícitamente la
+# versión moderna del plugin (Runtime v5+), que ya trae ese bug resuelto.
+[[plugins]]
+  package = "@netlify/plugin-nextjs"
