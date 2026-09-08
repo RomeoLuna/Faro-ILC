@@ -498,6 +498,18 @@ export async function saveVerification(payload) {
 
   const supabase = createSupabaseServerClient();
 
+  // FIX: calibration_events NO tiene columnas supervisor_name/supervisor_role
+  // (confirmado contra el RPC insert_calibration_with_points, que solo usa
+  // supervisor_signature y supervisor_id) — Supabase rechazó el insert con
+  // "Could not find the 'supervisor_name' column". El resto de la app
+  // registra el nombre/rol del supervisor como texto dentro de
+  // `observations` (mismo patrón que usa saveCalibrationEvent con
+  // "Aprobado por: <nombre>"), no como columnas propias.
+  const observationsWithSupervisor = [
+    payload.observations || null,
+    `Aprobado por: ${payload.supervisor_name} (${payload.supervisor_role || 'Supervisor'})`,
+  ].filter(Boolean).join('\n');
+
   const { data: event, error: insertError } = await supabase
     .from('calibration_events')
     .insert({
@@ -508,11 +520,9 @@ export async function saveVerification(payload) {
       performed_at:          new Date(payload.performed_at).toISOString(),
       performed_by:          null,
       technician_name:       payload.technician_name || null,
-      supervisor_name:       payload.supervisor_name,
-      supervisor_role:       payload.supervisor_role || 'Supervisor',
       supervisor_signature:  payload.supervisor_signature,
       supervisor_id:         payload.supervisor_id || null,
-      observations:          payload.observations || null,
+      observations:          observationsWithSupervisor,
       verification_elements: validElements,
     })
     .select('id')
