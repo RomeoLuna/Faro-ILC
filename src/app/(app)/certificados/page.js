@@ -130,7 +130,36 @@ export default async function CertificadosPage() {
       externalByPos.set(e.position_id, e);
     }
   }
-  
+
+  // 2c) Descartes manuales — posiciones que el usuario marcó como "ya
+  // calibradas por otro medio" desde la X de la tarjeta. Solo cuentan si
+  // siguen ligados a la MISMA última NOTI de hoy; si llegó una NOTI nueva
+  // desde que se descartó, el descarte queda obsoleto y la tarjeta vuelve
+  // a aparecer sola.
+  let dismissals = [];
+  if (posIds2.length > 0) {
+    const { data } = await supabase
+      .from('certificate_dismissals')
+      .select('position_id, last_noti_wo, dismissed_at')
+      .in('position_id', posIds2);
+    dismissals = data || [];
+  }
+  const dismissedByPos = new Map();
+  for (const d of dismissals) {
+    const prev = dismissedByPos.get(d.position_id);
+    if (!prev || new Date(d.dismissed_at) > new Date(prev.dismissed_at)) {
+      dismissedByPos.set(d.position_id, d);
+    }
+  }
+  function isDismissed(p) {
+    const d = dismissedByPos.get(p.id);
+    if (!d) return false;
+    // Coincide con la NOTI vigente al momento del descarte (soporta el
+    // caso de empate: last_noti_wo puede ser "9436384, 9440021").
+    const currentWos = splitWoList(p.last_noti_wo);
+    return currentWos.includes(d.last_noti_wo) || d.last_noti_wo === p.last_noti_wo;
+  }
+
   // 3) Merge
   const rows = (positions || []).map((p) => {
     // Match preferente por WO exacto
@@ -183,7 +212,8 @@ export default async function CertificadosPage() {
       // Próxima
       next_sap_date:   p.next_sap_date,
       // Certificado
-      hasCert:         !!event,
+      hasCert:         !!event || isDismissed(p),
+      dismissed:       !event && isDismissed(p),
       event,
     };
   });

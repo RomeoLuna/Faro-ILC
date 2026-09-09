@@ -11,8 +11,26 @@
 // =========================================================================
 
 import { useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
 const MESES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+
+// Guarda un descarte manual directo desde el navegador (mismo patrón que
+// ExternalCertModal.jsx — sin Server Actions, para evitar el 403 de
+// Netlify). No crea ningún certificado falso, solo registra que esta POS
+// se revisó y ya no debe pedirse aquí, ligada a su última NOTI actual.
+async function dismissCertificateClient({ positionId, lastNotiWo }) {
+  const supabase = createSupabaseBrowserClient();
+  const { error } = await supabase
+    .from('certificate_dismissals')
+    .insert({ position_id: positionId, last_noti_wo: lastNotiWo || null });
+  if (error) {
+    console.error('[dismissCertificateClient] insert error:', error);
+    return { ok: false, error: error.message };
+  }
+  return { ok: true };
+}
 
 function formatDate(iso) {
   if (!iso) return '—';
@@ -243,15 +261,56 @@ export default function CertificadosClient({ rows, kpis, cutoff, allPositions = 
 // CARD PRINCIPAL DE POS
 // ═════════════════════════════════════════════════════════════════════════
 function PosCard({ row }) {
+  const router = useRouter();
+  const [dismissing, setDismissing] = useState(false);
   const secTone = sectionTone(row.section);
   const dias = daysSince(row.noti_date);
 
+  async function handleDismiss() {
+    const confirmed = confirm(
+      `¿Confirmas que la POS ${row.pos_mtto} (${row.equipment_name || 'sin nombre'}) ya fue calibrada por otro medio?\n\n` +
+      `Se va a sacar de esta lista de "Necesita certificado" sin generar ningún certificado. ` +
+      `Si SAP notifica una calibración nueva más adelante, va a volver a aparecer aquí.`
+    );
+    if (!confirmed) return;
+
+    setDismissing(true);
+    const res = await dismissCertificateClient({ positionId: row.id, lastNotiWo: row.noti_wo });
+    setDismissing(false);
+
+    if (!res.ok) {
+      alert(`No se pudo descartar: ${res.error}`);
+      return;
+    }
+    router.refresh();
+  }
+
   return (
-    <div className={`bg-white rounded-xl border shadow-card overflow-hidden hover:shadow-pop transition ${
+    <div className={`relative bg-white rounded-xl border shadow-card overflow-hidden hover:shadow-pop transition ${
       row.hasCert
         ? 'border-neutral-200 border-t-4 border-t-brand-pass'
         : 'border-neutral-200 border-t-4 border-t-brand-fail'
     }`}>
+      {!row.hasCert && (
+        <button
+          type="button"
+          onClick={handleDismiss}
+          disabled={dismissing}
+          title="Ya fue calibrada por otro medio — sacar de esta lista"
+          className="absolute top-2 right-2 z-10 w-6 h-6 flex items-center justify-center rounded-full text-neutral-400 hover:text-brand-fail hover:bg-brand-failSoft transition disabled:opacity-40"
+        >
+          {dismissing ? (
+            <svg className="w-3.5 h-3.5 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <path d="M21 12a9 9 0 1 1-9-9" />
+            </svg>
+          ) : (
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <line x1="18" y1="6"  x2="6"  y2="18" />
+              <line x1="6"  y1="6"  x2="18" y2="18" />
+            </svg>
+          )}
+        </button>
+      )}
       {/* Header con POS + estado */}
       <div className="px-4 pt-3 pb-2 flex items-start justify-between gap-2">
         <div className="min-w-0">
