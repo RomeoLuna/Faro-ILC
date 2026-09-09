@@ -24,6 +24,7 @@ export const SENSOR_TYPES = [
   { id: 'Alcohol',          label: 'Alcohol',           units: ['º Platos'] },
   { id: 'pH/ORP',           label: 'pH/ORP',            units: ['pH'] },
   { id: 'Medidor de Flujo', label: 'Medidor de Flujo',  units: ['m³', 'hL', 'Kg'] },
+  { id: 'Peso',             label: 'Peso',              units: ['Kg', 'Lb'] },
 ];
 
 /**
