@@ -1,16 +1,25 @@
 'use client';
 // components/modals/ExternalCertModal.jsx
 // =========================================================================
-// EXTERNAL CERT MODAL — Sprint 53 (OT SAP obligatoria)
+// EXTERNAL CERT MODAL — Sprint 53 (OT SAP obligatoria) + simplificación
 // -------------------------------------------------------------------------
-// Cambio respecto a Sprint 8:
-//   • sap_wo ahora es OBLIGATORIO al registrar externos → mejor
-//     trazabilidad OT ↔ certificado y elimina el matching "por proximidad
-//     temporal" que hacía el dashboard de Certificados.
-//   • Al abrir el modal, se auto-llena con position.sap_open_wo si viene.
+// CAMBIO IMPORTANTE: se quitó por completo la opción de adjuntar el PDF
+// como archivo. Antes se podía subir el PDF a un bucket de Supabase
+// Storage, pero ese camino quedó bloqueado por un bug de la propia
+// infraestructura de Supabase: su servicio de Storage no reconoce bien
+// las políticas de RLS cuando el proyecto usa la llave nueva
+// "sb_publishable_..." (aunque esa misma llave funciona perfecto para el
+// resto de la base de datos) — reportado por otros desarrolladores con
+// el mismo síntoma exacto. Arreglar eso requiere cambiar una variable de
+// entorno en el panel de Netlify, algo que no está disponible ahora
+// mismo. En vez de seguir peleando con eso, se decidió simplificar el
+// flujo: el enlace de SharePoint pasa a ser la ÚNICA forma de referenciar
+// el certificado, y es obligatorio. Esto evita el bucket de Storage por
+// completo — solo se hace un insert a calibration_events, sin ningún
+// archivo de por medio.
 // =========================================================================
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser, useCanSignCalibration } from '@/components/auth/UserProvider';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
@@ -23,60 +32,19 @@ const INITIAL_FORM = {
   certificate_url:      '',
 };
 
-// FIX: saveExternalCalibration vivía como Server Action ('use server' en
-// actions.js), y en el hosting de Netlify de este proyecto las Server
-// Actions estaban devolviendo 403 Forbidden en producción por un bug
-// conocido de su runtime de Next.js (mismatch x-forwarded-host/origin) —
-// "Calibración interna" y "Verificación" no lo sufrían porque generan el
-// PDF en el navegador sin pasar por una Server Action para el guardado en
-// sí. Este flujo SÍ subía un archivo y guardaba vía Server Action, así
-// que quedaba completamente bloqueado en el sitio real (aunque funcionara
-// en local, donde este bug de Netlify nunca ocurre).
-//
-// Solución: mover todo el guardado (subida del PDF a Storage + insert en
-// calibration_events) al navegador, usando el mismo cliente de Supabase
-// que ya usa el resto de la app para leer datos — así se evita por
-// completo el mecanismo de Server Actions para este flujo.
+// Guarda directo desde el navegador (mismo cliente de Supabase que usa el
+// resto de la app para leer datos) — sin pasar por Server Actions
+// (ver nota en CalibrationModal.jsx sobre el 403 de Netlify con
+// Server Actions) y sin tocar Storage (ver nota arriba).
 async function saveExternalCalibrationClient({
-  positionId, posMtto, sapWo, provider, certNumber, performedAt, certificateUrl, file,
+  positionId, sapWo, provider, certNumber, performedAt, certificateUrl,
 }) {
   const supabase = createSupabaseBrowserClient();
 
-  const hasFile = !!(file && file.size > 0);
-  const hasUrl  = !!certificateUrl;
-
-  let publicUrl = null;
-  let filename  = null;
-
-  if (hasFile) {
-    const safePos = (posMtto || positionId).replace(/[^A-Za-z0-9_-]/g, '');
-    filename = `ext_${safePos}_${Date.now()}.pdf`;
-
-    const { error: uploadError } = await supabase
-      .storage
-      .from('external_certs')
-      .upload(filename, file, { contentType: 'application/pdf', upsert: false });
-
-    if (uploadError) {
-      console.error('[saveExternalCalibrationClient] upload error:', uploadError);
-      return { ok: false, error: `No se pudo subir el PDF: ${uploadError.message}` };
-    }
-
-    const { data: urlData } = supabase.storage.from('external_certs').getPublicUrl(filename);
-    publicUrl = urlData?.publicUrl;
-    if (!publicUrl) {
-      await supabase.storage.from('external_certs').remove([filename]);
-      return { ok: false, error: 'No se pudo obtener la URL pública del PDF.' };
-    }
-  }
-
-  const sources = [];
-  if (hasFile) sources.push('PDF en bucket interno');
-  if (hasUrl)  sources.push('enlace SharePoint');
   const observations =
     `Certificado externo emitido por ${provider}` +
     (certNumber ? ` (N° ${certNumber})` : '') +
-    ` · Fuente: ${sources.join(' + ')}`;
+    ` · Fuente: enlace SharePoint`;
 
   const { data: event, error: insertError } = await supabase
     .from('calibration_events')
@@ -89,8 +57,8 @@ async function saveExternalCalibrationClient({
       performed_by:          null,
       external_provider:     provider,
       external_cert_number:  certNumber || null,
-      external_cert_pdf_url: publicUrl,
-      certificate_url:       certificateUrl || null,
+      external_cert_pdf_url: null,
+      certificate_url:       certificateUrl,
       observations,
     })
     .select('id')
@@ -98,13 +66,10 @@ async function saveExternalCalibrationClient({
 
   if (insertError) {
     console.error('[saveExternalCalibrationClient] insert error:', insertError);
-    if (filename) await supabase.storage.from('external_certs').remove([filename]);
     return { ok: false, error: insertError.message };
   }
 
-  // No hay revalidatePath del lado del cliente — router.refresh() en el
-  // caller vuelve a correr los componentes de servidor igual.
-  return { ok: true, event_id: event.id, pdf_url: publicUrl, certificate_url: certificateUrl || null, filename };
+  return { ok: true, event_id: event.id, certificate_url: certificateUrl };
 }
 
 function isValidHttpUrl(s) {
@@ -119,13 +84,10 @@ function isValidHttpUrl(s) {
 
 export default function ExternalCertModal() {
   const router  = useRouter();
-  const fileInputRef = useRef(null);
 
   const [open, setOpen]         = useState(false);
   const [position, setPosition] = useState(null);
   const [form, setForm]         = useState(INITIAL_FORM);
-  const [file, setFile]         = useState(null);
-  const [dragging, setDragging] = useState(false);
   const [saving, setSaving]     = useState(false);
   const [error, setError]       = useState(null);
 
@@ -139,10 +101,8 @@ export default function ExternalCertModal() {
       setForm({
         ...INITIAL_FORM,
         performed_at: new Date().toISOString().split('T')[0],
-        // Sprint 53: auto-fill de la OT abierta actual
         sap_wo:       p.sap_open_wo || p.noti_wo || '',
       });
-      setFile(null);
       setError(null);
       setOpen(true);
     }
@@ -156,34 +116,14 @@ export default function ExternalCertModal() {
     setForm((prev) => ({ ...prev, [k]: v }));
   }
 
-  function pickFile(f) {
-    if (!f) { setFile(null); return; }
-    const isPdf = f.type === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf');
-    if (!isPdf) { setError('Sólo se aceptan archivos .pdf'); setFile(null); return; }
-    if (f.size > 15 * 1024 * 1024) { setError('El PDF supera 15 MB.'); setFile(null); return; }
-    setError(null);
-    setFile(f);
-  }
-
-  function onDrop(e) {
-    e.preventDefault();
-    setDragging(false);
-    pickFile(e.dataTransfer.files?.[0]);
-  }
-
   async function onSubmit(e) {
     e.preventDefault();
     setError(null);
 
-    // Resguardo del lado del cliente: antes esto lo validaba el propio
-    // Server Action del lado del servidor; ahora que el guardado corre
-    // en el navegador, se valida aquí explícitamente.
     if (!canSign) {
       setError('Tu rol no permite registrar certificados externos.');
       return;
     }
-
-    // Sprint 53: OT SAP obligatoria
     if (!form.sap_wo.trim()) {
       setError('La OT SAP es obligatoria para vincular el certificado a la orden.');
       return;
@@ -198,34 +138,30 @@ export default function ExternalCertModal() {
     }
 
     const trimmedUrl = form.certificate_url.trim();
-    if (!file && !trimmedUrl) {
-      setError('Adjunta el PDF del certificado o pega el enlace de SharePoint.');
+    if (!trimmedUrl) {
+      setError('Pega el enlace de SharePoint del certificado.');
       return;
     }
-    if (trimmedUrl && !isValidHttpUrl(trimmedUrl)) {
+    if (!isValidHttpUrl(trimmedUrl)) {
       setError('El enlace debe ser una URL HTTPS válida (https://…).');
       return;
     }
-
-    const fileValid = file;
 
     setSaving(true);
     let res;
     try {
       res = await saveExternalCalibrationClient({
         positionId:     position.id,
-        posMtto:        position.pos_mtto || '',
         sapWo:          form.sap_wo.trim(),
         provider:       form.external_provider.trim(),
         certNumber:     form.external_cert_number.trim(),
         performedAt:    form.performed_at,
         certificateUrl: trimmedUrl,
-        file:           fileValid,
       });
     } catch (err) {
       console.error('[ExternalCertModal] error inesperado al guardar:', err);
       setSaving(false);
-      setError('No se pudo guardar el certificado (posible archivo muy pesado o problema de conexión). Intenta de nuevo.');
+      setError('No se pudo guardar el certificado (problema de conexión). Intenta de nuevo.');
       return;
     }
     setSaving(false);
@@ -253,7 +189,7 @@ export default function ExternalCertModal() {
             <span className="px-2 py-0.5 rounded-md bg-brand-amberSoft text-amber-700 text-[10.5px] font-bold uppercase tracking-wider">
               Proveedor externo
             </span>
-            <div className="text-[18px] font-bold mt-1">Subir certificado externo</div>
+            <div className="text-[18px] font-bold mt-1">Registrar certificado externo</div>
             <div className="text-[12.5px] text-neutral-500">
               POS <span className="font-mono">{position.pos_mtto}</span> · {position.equipment_name}
             </div>
@@ -278,7 +214,7 @@ export default function ExternalCertModal() {
                 <line x1="12" y1="16" x2="12.01" y2="16" />
               </svg>
               <div className="text-[12.5px] text-amber-900 leading-snug">
-                <strong>Modo lectura:</strong> tu rol ({profile?.role}) no permite subir certificados.
+                <strong>Modo lectura:</strong> tu rol ({profile?.role}) no permite registrar certificados.
               </div>
             </div>
           )}
@@ -291,7 +227,8 @@ export default function ExternalCertModal() {
             </svg>
             <div className="text-[12.5px] text-amber-900 leading-snug">
               Use este flujo cuando un <strong>proveedor o laboratorio externo</strong> haya realizado la calibración.
-              La <strong>OT SAP es obligatoria</strong> para trazabilidad — vincula el certificado a la orden exacta.
+              La <strong>OT SAP</strong> y el <strong>enlace de SharePoint</strong> son obligatorios — el certificado
+              en sí queda guardado en SharePoint, aquí solo se confirma y vincula a la orden.
             </div>
           </div>
 
@@ -300,7 +237,6 @@ export default function ExternalCertModal() {
             <ReadField label="Equipo"   value={position.equipment_name} />
           </div>
 
-          {/* Sprint 53: OT SAP obligatoria */}
           <div className="grid grid-cols-2 gap-3">
             <InputField
               label="OT SAP *"
@@ -338,7 +274,7 @@ export default function ExternalCertModal() {
 
           <div>
             <InputField
-              label="Enlace del Certificado (SharePoint)"
+              label="Enlace del certificado (SharePoint) *"
               type="url"
               value={form.certificate_url}
               onChange={(v) => setField('certificate_url', v)}
@@ -346,61 +282,8 @@ export default function ExternalCertModal() {
               disabled={!canSign}
             />
             <div className="text-[11px] text-neutral-500 mt-1">
-              Opcional. Puedes adjuntar PDF, pegar enlace, o ambos — uno de los dos es obligatorio.
+              Pega aquí el enlace directo al PDF ya guardado en SharePoint. Es obligatorio.
             </div>
-          </div>
-
-          <div>
-            <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-600 mb-1">
-              Archivo PDF del certificado <span className="text-neutral-400">(opcional si pegas enlace)</span>
-            </label>
-
-            <label
-              htmlFor="ext-cert-file"
-              onDragOver={(e) => { e.preventDefault(); if (canSign) setDragging(true); }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={canSign ? onDrop : undefined}
-              className={`block border-2 border-dashed rounded-xl p-6 text-center transition cursor-pointer
-                ${dragging
-                  ? 'border-brand-amber bg-brand-amberSoft/40'
-                  : 'border-neutral-300 bg-neutral-50 hover:border-brand-amber hover:bg-brand-amberSoft/30'}
-                ${!canSign ? 'opacity-50 cursor-not-allowed' : ''}`}
-            >
-              <svg className="w-10 h-10 mx-auto text-brand-amber" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
-              </svg>
-              <div className="mt-2 text-[14px] font-semibold text-neutral-800">
-                {dragging ? 'Suelta el PDF aquí' : 'Arrastra el PDF o haz clic para seleccionar'}
-              </div>
-              <div className="text-[12px] text-neutral-500 mt-1">
-                Sólo archivos .pdf · máx. 15 MB
-              </div>
-              <input
-                ref={fileInputRef}
-                id="ext-cert-file"
-                type="file"
-                accept="application/pdf,.pdf"
-                disabled={!canSign}
-                onChange={(e) => pickFile(e.target.files?.[0])}
-                className="hidden"
-              />
-            </label>
-
-            {file && (
-              <div className="mt-2 flex items-center justify-between rounded-lg border border-brand-pass/30 bg-brand-passSoft/40 px-3 py-2">
-                <div className="text-[12.5px] text-brand-pass">
-                  <span className="font-bold">{file.name}</span>
-                  <span className="text-neutral-500 ml-2">({(file.size / 1024).toFixed(1)} KB)</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => { setFile(null); if (fileInputRef.current) fileInputRef.current.value = ''; }}
-                  className="text-neutral-400 hover:text-neutral-900 text-[14px] leading-none px-1"
-                >
-                  ×
-                </button>
-              </div>
-            )}
           </div>
 
           {error && (
@@ -420,7 +303,7 @@ export default function ExternalCertModal() {
                 <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
                   <path d="M20 6L9 17l-5-5" />
                 </svg>
-                {saving ? 'Guardando…' : 'Guardar certificado'}
+                {saving ? 'Guardando…' : 'Confirmar y guardar'}
               </button>
             )}
           </div>
