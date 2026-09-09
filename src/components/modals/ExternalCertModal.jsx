@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useUser, useCanSignCalibration } from '@/components/auth/UserProvider';
-import { saveExternalCalibration } from './actions';
+import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 
 const INITIAL_FORM = {
   sap_wo:               '',   // Sprint 53: obligatoria
@@ -22,6 +22,90 @@ const INITIAL_FORM = {
   performed_at:         new Date().toISOString().split('T')[0],
   certificate_url:      '',
 };
+
+// FIX: saveExternalCalibration vivía como Server Action ('use server' en
+// actions.js), y en el hosting de Netlify de este proyecto las Server
+// Actions estaban devolviendo 403 Forbidden en producción por un bug
+// conocido de su runtime de Next.js (mismatch x-forwarded-host/origin) —
+// "Calibración interna" y "Verificación" no lo sufrían porque generan el
+// PDF en el navegador sin pasar por una Server Action para el guardado en
+// sí. Este flujo SÍ subía un archivo y guardaba vía Server Action, así
+// que quedaba completamente bloqueado en el sitio real (aunque funcionara
+// en local, donde este bug de Netlify nunca ocurre).
+//
+// Solución: mover todo el guardado (subida del PDF a Storage + insert en
+// calibration_events) al navegador, usando el mismo cliente de Supabase
+// que ya usa el resto de la app para leer datos — así se evita por
+// completo el mecanismo de Server Actions para este flujo.
+async function saveExternalCalibrationClient({
+  positionId, posMtto, sapWo, provider, certNumber, performedAt, certificateUrl, file,
+}) {
+  const supabase = createSupabaseBrowserClient();
+
+  const hasFile = !!(file && file.size > 0);
+  const hasUrl  = !!certificateUrl;
+
+  let publicUrl = null;
+  let filename  = null;
+
+  if (hasFile) {
+    const safePos = (posMtto || positionId).replace(/[^A-Za-z0-9_-]/g, '');
+    filename = `ext_${safePos}_${Date.now()}.pdf`;
+
+    const { error: uploadError } = await supabase
+      .storage
+      .from('external_certs')
+      .upload(filename, file, { contentType: 'application/pdf', upsert: false });
+
+    if (uploadError) {
+      console.error('[saveExternalCalibrationClient] upload error:', uploadError);
+      return { ok: false, error: `No se pudo subir el PDF: ${uploadError.message}` };
+    }
+
+    const { data: urlData } = supabase.storage.from('external_certs').getPublicUrl(filename);
+    publicUrl = urlData?.publicUrl;
+    if (!publicUrl) {
+      await supabase.storage.from('external_certs').remove([filename]);
+      return { ok: false, error: 'No se pudo obtener la URL pública del PDF.' };
+    }
+  }
+
+  const sources = [];
+  if (hasFile) sources.push('PDF en bucket interno');
+  if (hasUrl)  sources.push('enlace SharePoint');
+  const observations =
+    `Certificado externo emitido por ${provider}` +
+    (certNumber ? ` (N° ${certNumber})` : '') +
+    ` · Fuente: ${sources.join(' + ')}`;
+
+  const { data: event, error: insertError } = await supabase
+    .from('calibration_events')
+    .insert({
+      position_id:           positionId,
+      source:                'external',
+      sap_wo:                sapWo,
+      result:                'PASS',
+      performed_at:          new Date(performedAt).toISOString(),
+      performed_by:          null,
+      external_provider:     provider,
+      external_cert_number:  certNumber || null,
+      external_cert_pdf_url: publicUrl,
+      certificate_url:       certificateUrl || null,
+      observations,
+    })
+    .select('id')
+    .single();
+
+  if (insertError) {
+    console.error('[saveExternalCalibrationClient] insert error:', insertError);
+    if (filename) await supabase.storage.from('external_certs').remove([filename]);
+    return { ok: false, error: insertError.message };
+  }
+
+  // No hay revalidatePath del lado del cliente — router.refresh() en el
+  // caller vuelve a correr los componentes de servidor igual.
+  return { ok: true, event_id: event.id, pdf_url: publicUrl, certificate_url: certificateUrl || null, filename };
+}
 
 function isValidHttpUrl(s) {
   if (!s) return false;
@@ -91,6 +175,14 @@ export default function ExternalCertModal() {
     e.preventDefault();
     setError(null);
 
+    // Resguardo del lado del cliente: antes esto lo validaba el propio
+    // Server Action del lado del servidor; ahora que el guardado corre
+    // en el navegador, se valida aquí explícitamente.
+    if (!canSign) {
+      setError('Tu rol no permite registrar certificados externos.');
+      return;
+    }
+
     // Sprint 53: OT SAP obligatoria
     if (!form.sap_wo.trim()) {
       setError('La OT SAP es obligatoria para vincular el certificado a la orden.');
@@ -115,25 +207,22 @@ export default function ExternalCertModal() {
       return;
     }
 
-    const fd = new FormData();
-    fd.append('position_id',          position.id);
-    fd.append('pos_mtto',             position.pos_mtto || '');
-    fd.append('sap_wo',               form.sap_wo.trim());   // Sprint 53
-    fd.append('external_provider',    form.external_provider.trim());
-    fd.append('external_cert_number', form.external_cert_number.trim());
-    fd.append('performed_at',         form.performed_at);
-    fd.append('certificate_url',      trimmedUrl);
-    if (file) fd.append('pdf_file', file);
+    const fileValid = file;
 
     setSaving(true);
     let res;
     try {
-      res = await saveExternalCalibration(fd);
+      res = await saveExternalCalibrationClient({
+        positionId:     position.id,
+        posMtto:        position.pos_mtto || '',
+        sapWo:          form.sap_wo.trim(),
+        provider:       form.external_provider.trim(),
+        certNumber:     form.external_cert_number.trim(),
+        performedAt:    form.performed_at,
+        certificateUrl: trimmedUrl,
+        file:           fileValid,
+      });
     } catch (err) {
-      // FIX: sin este try/catch, cualquier fallo inesperado (ej. el límite
-      // de tamaño de Server Actions que corregimos en next.config.mjs)
-      // quedaba como una excepción sin capturar — no mostraba error, no
-      // guardaba, no cerraba el modal, y el botón se quedaba pegado.
       console.error('[ExternalCertModal] error inesperado al guardar:', err);
       setSaving(false);
       setError('No se pudo guardar el certificado (posible archivo muy pesado o problema de conexión). Intenta de nuevo.');
