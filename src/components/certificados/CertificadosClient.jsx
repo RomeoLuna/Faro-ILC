@@ -100,8 +100,19 @@ export default function CertificadosClient({ rows, kpis, cutoff, allPositions = 
 
   return (
     <>
-      {/* ─── Corrección: botón directo, sin buscador intermedio ─────────── */}
-      <div className="flex justify-end mb-4">
+            {/* ─── Botones globales ─────────────────────────────────────────────── */}
+      <div className="flex justify-end gap-2 mb-4">
+        <button
+          type="button"
+          onClick={() => window.dispatchEvent(new CustomEvent('open:verification-standalone'))}
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-lg border-2 border-brand-ink text-brand-ink text-[13px] font-bold hover:bg-neutral-100 transition"
+        >
+          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+            <path d="M9 11l3 3L22 4" />
+            <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+          </svg>
+          Generar verificación
+        </button>
         <button
           type="button"
           onClick={() => window.dispatchEvent(new CustomEvent('open:calibration-standalone'))}

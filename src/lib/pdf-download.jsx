@@ -29,6 +29,13 @@
 //   };
 // =========================================================================
 
+// Nombre de archivo seguro: en modo independiente la POS puede venir vacía
+// o como "—", lo que dejaría nombres como "Verificacion_—_2026-10-02.pdf".
+function safeFilePart(value, fallback = 'SinPOS') {
+  const clean = String(value ?? '').trim().replace(/[—\/\\:*?"<>|\s]+/g, '-').replace(/^-+|-+$/g, '');
+  return clean || fallback;
+}
+
 export async function generateAndDownloadCertificate(data) {
   // Cargar la librería + el componente PDF sólo cuando se necesite
   const [{ pdf }, { default: CertificatePDF }] = await Promise.all([
@@ -42,7 +49,7 @@ export async function generateAndDownloadCertificate(data) {
 
   // Nombre del archivo: Certificado_<POS>_<YYYY-MM-DD>.pdf
   const dateIso  = new Date(data.performedAt).toISOString().split('T')[0];
-  const filename = `Certificado_${data.position.pos_mtto}_${dateIso}.pdf`;
+  const filename = `Certificado_${safeFilePart(data.position.pos_mtto)}_${dateIso}.pdf`;
 
   // Forzar descarga en el navegador (sin servidor de por medio)
   const url  = URL.createObjectURL(blob);
@@ -72,7 +79,7 @@ export async function generateAndDownloadVerification(data) {
   const blob = await pdf(doc).toBlob();
 
   const dateIso  = new Date(data.performedAt).toISOString().split('T')[0];
-  const filename = `Verificacion_${data.position.pos_mtto}_${dateIso}.pdf`;
+  const filename = `Verificacion_${safeFilePart(data.position.pos_mtto)}_${dateIso}.pdf`;
 
   const url  = URL.createObjectURL(blob);
   const link = document.createElement('a');

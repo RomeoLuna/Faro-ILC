@@ -68,9 +68,13 @@ export default function VerificationCertModal() {
   const canSign     = useCanSignCalibration();
   const { profile } = useUser() || {};
 
+  // Modo: 'linked' = ligado a una POS real | 'standalone' = independiente
+  const [mode, setMode] = useState('linked');
+
   useEffect(() => {
     function handler(e) {
       const p = e.detail;
+      setMode('linked');
       setPosition(p);
       setSapWo(p.sap_open_wo || p.noti_wo || '');
       setTechnicianName('');
@@ -83,6 +87,24 @@ export default function VerificationCertModal() {
     }
     window.addEventListener('open:verification-cert', handler);
     return () => window.removeEventListener('open:verification-cert', handler);
+  }, []);
+
+  // Modo standalone: sin POS real, solo genera PDF sin guardar en Supabase
+  useEffect(() => {
+    function handler() {
+      setMode('standalone');
+      setPosition({ id: null, pos_mtto: '', equipment_name: '', description: '', area_name: '' });
+      setSapWo('');
+      setTechnicianName('');
+      setPerformedAt(todayIso());
+      setElements([emptyElement(), emptyElement(), emptyElement()]);
+      setComment('');
+      setSupervisorId('');
+      setError(null);
+      setOpen(true);
+    }
+    window.addEventListener('open:verification-standalone', handler);
+    return () => window.removeEventListener('open:verification-standalone', handler);
   }, []);
 
   // Mismo fetch + fallback de firma que CalibrationModal.jsx (ver ese
@@ -139,7 +161,7 @@ export default function VerificationCertModal() {
 
   function removeElement(i) {
     setElements((prev) => {
-      if (prev.length <= MIN_ELEMENTS) return prev; // nunca bajar de 3
+      if (prev.length <= MIN_ELEMENTS) return prev; // nunca bajar del mínimo
       return prev.filter((_, idx) => idx !== i);
     });
   }
@@ -152,6 +174,12 @@ export default function VerificationCertModal() {
     e.preventDefault();
     setError(null);
 
+    // En modo independiente no hay POS real: el nombre del equipo es lo
+    // mínimo que necesita el PDF para identificar qué se verificó.
+    if (mode === 'standalone' && !position.equipment_name?.trim()) {
+      setError('Ingresa el nombre del equipo para el certificado.');
+      return;
+    }
     if (!technicianName.trim()) {
       setError('El nombre del técnico responsable es obligatorio.');
       return;
@@ -162,6 +190,36 @@ export default function VerificationCertModal() {
     }
     if (completeCount < MIN_ELEMENTS) {
       setError(`Completa al menos ${MIN_ELEMENTS} elementos (nombre, tipo y valor).`);
+      return;
+    }
+
+    // ═ Modo standalone: solo genera PDF, no guarda en Supabase ═══════════
+    if (mode === 'standalone') {
+      setSaving(true);
+      try {
+        await generateAndDownloadVerification({
+          position: {
+            pos_mtto:       position.pos_mtto?.trim() || '—',
+            equipment_name: position.equipment_name.trim(),
+            description:    position.description || '',
+            area_name:      position.area_name?.trim() || '',
+          },
+          form: { sap_wo: sapWo.trim(), observations: comment.trim() || null },
+          elements: elements.filter((e) => e.nombre.trim() && e.tipo && e.valor !== ''),
+          technician: { name: technicianName.trim(), role: 'Técnico de Mantenimiento' },
+          supervisor: { name: supervisor.name, role: supervisor.role, signature: supervisor.signature },
+          performedAt: performedAtIso(performedAt),
+        });
+        setOpen(false);
+        window.dispatchEvent(new CustomEvent('toast:success', {
+          detail: { message: 'PDF de verificación generado. No se guardó en el sistema.' },
+        }));
+      } catch (err) {
+        console.error('[VerificationCertModal standalone] error:', err);
+        setError('No se pudo generar el PDF. Intentá de nuevo.');
+      } finally {
+        setSaving(false);
+      }
       return;
     }
 
@@ -219,13 +277,21 @@ export default function VerificationCertModal() {
 
         <div className="px-6 py-4 border-b border-neutral-200 flex items-start justify-between">
           <div>
-            <span className="px-2 py-0.5 rounded-md bg-brand-amberSoft text-amber-700 text-[10.5px] font-bold uppercase tracking-wider">
-              Verificación
+            <span className={`px-2 py-0.5 rounded-md text-[10.5px] font-bold uppercase tracking-wider ${
+              mode === 'standalone'
+                ? 'bg-brand-amberSoft text-amber-700'
+                : 'bg-brand-ink text-brand-amber'
+            }`}>
+              {mode === 'standalone' ? 'Verificación independiente' : 'Verificación'}
             </span>
             <div className="text-[18px] font-bold mt-1">Certificado de verificación</div>
-            <div className="text-[12.5px] text-neutral-500">
-              POS <span className="font-mono">{position.pos_mtto}</span> · {position.equipment_name}
-            </div>
+            {mode === 'standalone' ? (
+              <div className="text-[12.5px] text-neutral-500">Modo independiente — solo genera el PDF, no se guarda en el sistema</div>
+            ) : (
+              <div className="text-[12.5px] text-neutral-500">
+                POS <span className="font-mono">{position.pos_mtto}</span> · {position.equipment_name}
+              </div>
+            )}
           </div>
           <button
             type="button"
@@ -243,6 +309,30 @@ export default function VerificationCertModal() {
             <div className="flex gap-3 p-3.5 rounded-lg bg-brand-warnSoft border-l-4 border-brand-warn">
               <div className="text-[12.5px] text-amber-900 leading-snug">
                 <strong>Modo lectura:</strong> tu rol ({profile?.role}) no permite registrar verificaciones.
+              </div>
+            </div>
+          )}
+
+          {/* Campos de equipo editables en modo standalone */}
+          {mode === 'standalone' && (
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 p-4 rounded-xl bg-brand-amberSoft/30 border border-brand-amber/40">
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-600 mb-1">POS MTTO (opcional)</label>
+                <input value={position.pos_mtto} onChange={(e) => setPosition((p) => ({ ...p, pos_mtto: e.target.value }))} disabled={!canSign}
+                  placeholder="Ej. Sin POS"
+                  className="w-full border border-neutral-300 rounded-lg px-3 py-2 text-[13px] outline-none focus:ring-2 focus:ring-brand-amber bg-white disabled:bg-neutral-100" />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-600 mb-1">Equipo *</label>
+                <input value={position.equipment_name} onChange={(e) => setPosition((p) => ({ ...p, equipment_name: e.target.value }))} disabled={!canSign}
+                  placeholder="Nombre del equipo"
+                  className="w-full border border-neutral-300 rounded-lg px-3 py-2 text-[13px] outline-none focus:ring-2 focus:ring-brand-amber bg-white disabled:bg-neutral-100" />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-neutral-600 mb-1">Área (opcional)</label>
+                <input value={position.area_name} onChange={(e) => setPosition((p) => ({ ...p, area_name: e.target.value }))} disabled={!canSign}
+                  placeholder="Ej. Envasado"
+                  className="w-full border border-neutral-300 rounded-lg px-3 py-2 text-[13px] outline-none focus:ring-2 focus:ring-brand-amber bg-white disabled:bg-neutral-100" />
               </div>
             </div>
           )}
@@ -425,7 +515,9 @@ export default function VerificationCertModal() {
             </button>
             <button type="submit" disabled={saving || !canSign}
               className="px-4 py-2 rounded-lg bg-brand-ink text-brand-amber text-[13px] font-bold hover:bg-neutral-800 disabled:opacity-40">
-              {saving ? 'Guardando…' : 'Guardar y descargar PDF'}
+              {saving
+                ? (mode === 'standalone' ? 'Generando PDF…' : 'Guardando…')
+                : (mode === 'standalone' ? 'Generar y descargar PDF' : 'Guardar y descargar PDF')}
             </button>
           </div>
         </form>

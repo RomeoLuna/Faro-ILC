@@ -46,6 +46,7 @@ const SHARED = [
   { href: '/certificados', label: 'Certificados' },
   { href: '/catalogos',    label: 'Catálogo de Patrones' },
   { href: '/herramientas', label: 'Herramientas CSV' },
+  { href: '/etiquetas',    label: 'Etiquetas Calib.' },
 ];
 
 function badgeClass(tone) {
