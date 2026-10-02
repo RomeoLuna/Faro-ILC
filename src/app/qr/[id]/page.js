@@ -171,7 +171,9 @@ export default async function QrPage({ params }) {
             {live && pos.equipment_name && (
               <div className="col-span-2"><InfoItem label="Equipo" value={pos.equipment_name} /></div>
             )}
-            {live && pos.frequency_label && <InfoItem label="Frecuencia" value={pos.frequency_label} />}
+            {live && pos.frequency_months && (
+              <InfoItem label="Frecuencia" value={`Cada ${pos.frequency_months} ${Number(pos.frequency_months) === 1 ? 'mes' : 'meses'}`} />
+            )}
           </div>
         </div>
 

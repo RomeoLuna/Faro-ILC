@@ -170,3 +170,37 @@ export async function softDeletePos({ id, password }) {
   revalidatePath('/calidad');
   return { ok: true };
 }
+
+// ── UPDATE frecuencia ──────────────────────────────────────────────────
+// La usa el lápiz de la columna "Frecuencia" en Administración → POS.
+// Faltaba (PosManagerPanel ya la importaba): editar la frecuencia fallaba
+// con "updatePosFrequency is not a function".
+// La frecuencia vive en maintenance_positions.frequency_months y de ahí la
+// leen el Faro (vencimiento por frecuencia), Certificados y las Etiquetas QR.
+export async function updatePosFrequency({ id, frequency_months, frequency_source, password }) {
+  const pwErr = requirePassword(password);
+  if (pwErr) return pwErr;
+  if (!id) return { ok: false, error: 'Falta id de la POS.' };
+
+  const freqNum = Number(frequency_months);
+  if (!Number.isInteger(freqNum) || freqNum < 1 || freqNum > 120) {
+    return { ok: false, error: 'Frecuencia en meses debe ser un número entero entre 1 y 120.' };
+  }
+  const source = frequency_source === 'auto' ? 'auto' : 'custom';
+
+  const supabase = createSupabaseServerClient();
+  const { error } = await supabase
+    .from('maintenance_positions')
+    .update({ frequency_months: freqNum, frequency_source: source, updated_at: new Date().toISOString() })
+    .eq('id', id);
+
+  if (error) return { ok: false, error: error.message };
+
+  revalidatePath('/admin');
+  revalidatePath('/envasado');
+  revalidatePath('/ingenieria');
+  revalidatePath('/calidad');
+  revalidatePath('/certificados');
+  revalidatePath('/etiquetas');
+  return { ok: true };
+}
