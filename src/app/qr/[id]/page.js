@@ -62,6 +62,17 @@ export default async function QrPage({ params }) {
   let lastEvent = null;
   let siblings = [];
 
+  // Historial propio del sticker (tabla de supabase/etiquetas_historial.sql).
+  // Si la tabla aún no existe, la página sigue funcionando con datos del Faro.
+  const { data: recData, error: recErr } = await supabase
+    .from('calibration_label_records')
+    .select('*')
+    .eq('label_id', label.id)
+    .order('performed_at', { ascending: false })
+    .limit(50);
+  if (recErr) console.error('[QrPage] historial:', recErr);
+  const records = recData || [];
+
   if (label.pos_id) {
     const [posRes, evRes, sibRes] = await Promise.all([
       supabase
@@ -92,9 +103,12 @@ export default async function QrPage({ params }) {
 
   const live = !!pos;
 
-  // Lo escrito en el sticker manda; lo vacío se completa con el Faro.
-  const rec  = effectiveRecord(label, pos, lastEvent);
+  // Mismas reglas que la app (lib/labelRecord.js)
+  const rec  = effectiveRecord(label, { pos, lastEvent, records, sensorsInPos: siblings.length + 1 });
+  const sh   = rec.shown;
   const tone = TONE[rec.banner.tone] || TONE.neutral;
+  const history = records.filter((r) => !r.voided).slice(0, 6);
+  const RESULT_LABEL = { PASS: 'Aprobado', PASS_LIMITE: 'Aprobado al límite', FAIL: 'Rechazado' };
   const area = live ? [pos.area, pos.sub_area].filter(Boolean).join(' · ') : label.area;
   const certLabel = 'Ver certificado de calibración';
 
@@ -165,11 +179,11 @@ export default async function QrPage({ params }) {
         <div className="px-5 py-4 space-y-3">
           <div className="bg-neutral-50 border border-neutral-200 rounded-xl p-4">
             <div className="text-[10px] uppercase tracking-wider text-neutral-400 font-bold mb-1">Última calibración</div>
-            <div className="text-[20px] font-extrabold text-neutral-900">{formatDate(rec.performedAt) || '—'}</div>
+            <div className="text-[20px] font-extrabold text-neutral-900">{formatDate(sh?.performedAt) || '—'}</div>
             <div className="mt-2 space-y-0.5">
               <div className="text-[12.5px] text-neutral-600">
                 <span className="text-neutral-400">Realizada por: </span>
-                <strong>{rec.performedBy || '—'}</strong>
+                <strong>{sh?.performedBy || 'sin dato'}</strong>
               </div>
               {rec.resultInfo && (
                 <div className="text-[12.5px] text-neutral-600">
@@ -177,10 +191,20 @@ export default async function QrPage({ params }) {
                   <strong className={TONE[rec.resultInfo.tone].text}>{rec.resultInfo.label}</strong>
                 </div>
               )}
-              {rec.sapWo && (
+              {sh?.sapWo && (
                 <div className="text-[12px] text-neutral-600">
                   <span className="text-neutral-400">OT SAP: </span>
-                  <span className="font-mono font-bold">{rec.sapWo}</span>
+                  <span className="font-mono font-bold">{sh.sapWo}</span>
+                </div>
+              )}
+              {sh?.notes && (
+                <div className="text-[12px] text-neutral-600">
+                  <span className="text-neutral-400">Obs.: </span>{sh.notes}
+                </div>
+              )}
+              {sh?.registeredBy && (
+                <div className="text-[10.5px] text-neutral-400 pt-1">
+                  Registrado en el sistema por {sh.registeredBy}
                 </div>
               )}
             </div>
@@ -189,7 +213,7 @@ export default async function QrPage({ params }) {
           <div className={`border rounded-xl p-4 ${TONE[rec.vigencia?.tone || 'neutral'].bg} ${TONE[rec.vigencia?.tone || 'neutral'].soft}`}>
             <div className="text-[10px] uppercase tracking-wider text-neutral-400 font-bold mb-1">Próxima calibración</div>
             <div className={`text-[20px] font-extrabold ${TONE[rec.vigencia?.tone || 'neutral'].text}`}>
-              {formatDate(rec.nextDate) || '—'}
+              {formatDate(sh?.nextDate) || '—'}
             </div>
             {rec.vigencia?.hint && (
               <div className={`mt-0.5 text-[12px] font-semibold ${TONE[rec.vigencia.tone].text}`}>{rec.vigencia.hint}</div>
@@ -198,9 +222,9 @@ export default async function QrPage({ params }) {
         </div>
 
         {/* Certificado */}
-        {rec.certUrl && (
+        {sh?.certUrl && (
           <div className="px-5 pb-4">
-            <a href={rec.certUrl} target="_blank" rel="noopener noreferrer"
+            <a href={sh.certUrl} target="_blank" rel="noopener noreferrer"
               className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-neutral-900 text-yellow-400 font-bold text-[14px] hover:bg-neutral-800 transition">
               <svg className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -209,6 +233,26 @@ export default async function QrPage({ params }) {
               </svg>
               {certLabel}
             </a>
+            {/sharepoint\.com/i.test(sh.certUrl) && (
+              <div className="mt-1.5 text-[11px] text-neutral-500 text-center">
+                Se abre en SharePoint: requiere iniciar sesión con cuenta de la empresa.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Historial */}
+        {history.length > 1 && (
+          <div className="px-5 pb-4">
+            <div className="text-[10px] uppercase tracking-wider text-neutral-400 font-bold mb-1.5">Calibraciones anteriores</div>
+            <div className="border border-neutral-200 rounded-xl divide-y divide-neutral-100 overflow-hidden">
+              {history.slice(1).map((r) => (
+                <div key={r.id} className="px-3 py-2 text-[12px] flex items-center justify-between gap-2">
+                  <span className="font-semibold">{formatDate(r.performed_at)}</span>
+                  <span className="text-neutral-600 truncate">{RESULT_LABEL[r.result] || '—'} · {r.performed_by || '—'}</span>
+                </div>
+              ))}
+            </div>
           </div>
         )}
 
@@ -242,7 +286,7 @@ export default async function QrPage({ params }) {
               ))}
             </div>
             <div className="mt-1 text-[10.5px] text-neutral-400">
-              Comparten el mismo estado de calibración de la POS.
+              Cada sensor tiene su propio registro de calibración.
             </div>
           </div>
         )}

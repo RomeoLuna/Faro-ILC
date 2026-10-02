@@ -101,6 +101,44 @@ export default async function EtiquetasPage() {
     }));
   }
 
+  // Historial de calibraciones de los stickers (tabla del SQL
+  // supabase/etiquetas_historial.sql). Si aún no se corrió ese SQL, la
+  // página funciona igual y muestra un aviso para correrlo.
+  let records = [];
+  let historyReady = true;
+  if (!error) {
+    const recRes = await fetchAll(() =>
+      supabase
+        .from('calibration_label_records')
+        .select('*')
+        .order('performed_at', { ascending: false })
+        .order('id', { ascending: true })
+    );
+    if (recRes.error) {
+      console.error('[EtiquetasPage] historial:', recRes.error);
+      historyReady = false;
+    } else {
+      records = recRes.data || [];
+    }
+  }
+
+  // Último certificado emitido en Faro por cada POS (resultado, técnico,
+  // enlace) — es la parte "Faro" que se compara con lo registrado a mano.
+  const faroEvents = {};
+  if (!error && positions.length > 0) {
+    const evRes = await fetchAll(() =>
+      supabase
+        .from('calibration_events')
+        .select('id, position_id, source, performed_at, result, technician_name, sap_wo, certificate_url, external_cert_pdf_url, external_provider')
+        .order('performed_at', { ascending: false })
+        .order('id', { ascending: true })
+    );
+    if (evRes.error) console.error('[EtiquetasPage] eventos:', evRes.error);
+    for (const ev of evRes.data || []) {
+      if (ev.position_id && !faroEvents[ev.position_id]) faroEvents[ev.position_id] = ev;
+    }
+  }
+
   if (error) {
     // Si la tabla todavía no existe, mostramos ayuda en vez de romper
     // 42P01 = Postgres "relation does not exist"; PGRST205 = PostgREST
@@ -176,7 +214,13 @@ NOTIFY pgrst, 'reload schema';`}
         </div>
       </div>
 
-      <EtiquetasClient initialLabels={labels || []} positions={positions} />
+      <EtiquetasClient
+        initialLabels={labels || []}
+        positions={positions}
+        initialRecords={records}
+        faroEvents={faroEvents}
+        historyReady={historyReady}
+      />
     </section>
   );
 }
